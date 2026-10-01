@@ -1,0 +1,12 @@
+# Uploaded files are data, never code
+<IfModule mod_php.c>
+  php_flag engine off
+</IfModule>
+<IfModule mod_php7.c>
+  php_flag engine off
+</IfModule>
+RemoveHandler .php .phtml .php5 .php7 .phar
+<FilesMatch "\.(php|phtml|php5|php7|phar|pl|py|cgi|sh)$">
+  Require all denied
+</FilesMatch>
+Options -Indexes

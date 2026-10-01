@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="4 4 56 56" role="img" aria-label="Jenmond African Market">
+  <defs><linearGradient id="afmBag" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1A8A5A"/><stop offset="1" stop-color="#0B4F35"/></linearGradient></defs>
+  <path d="M22 23v-5.5a10 10 0 0 1 20 0V23" fill="none" stroke="#E2A022" stroke-width="4" stroke-linecap="round"/>
+  <path d="M14.2 20h35.6a3 3 0 0 1 3 2.8l2.6 30.6a4.5 4.5 0 0 1-4.5 4.9H13.1a4.5 4.5 0 0 1-4.5-4.9l2.6-30.6a3 3 0 0 1 3-2.8z" fill="url(#afmBag)"/>
+  <circle cx="22" cy="25" r="1.6" fill="#E2A022"/><circle cx="42" cy="25" r="1.6" fill="#E2A022"/>
+  <path d="M21 51.5 32 29.5l11 22" fill="none" stroke="#FFF7E8" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="24.6" y="41.2" width="4.4" height="5" rx="1" fill="#E2A022"/>
+  <rect x="29.8" y="41.2" width="4.4" height="5" rx="1" fill="#D35A30"/>
+  <rect x="35" y="41.2" width="4.4" height="5" rx="1" fill="#E2A022"/>
+</svg>
