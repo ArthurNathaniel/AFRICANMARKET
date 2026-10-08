@@ -16,6 +16,12 @@ define('DB_NAME', 'african_market');
 define('DB_USER', 'root');
 define('DB_PASS', '');
 
+// define('DB_HOST', '127.0.0.1');
+// define('DB_PORT', 3306);
+// define('DB_NAME', 'u257031014_jen');
+// define('DB_USER', 'u257031014_jen');
+// define('DB_PASS', 'OnGod@@123');
+
 // ---- URLs ------------------------------------------------------------------
 // Leave empty to auto-detect from the web server's document root,
 // or set explicitly in production, e.g. 'https://www.jenmondafricanmarket.com'
