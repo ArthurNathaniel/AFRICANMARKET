@@ -3,120 +3,203 @@ require __DIR__ . '/partials/bootstrap.php';
 require __DIR__ . '/partials/product-card.php';
 
 $base = product_card_sql() . ' WHERE ' . LIVE_PRODUCT_SQL;
-$featured = fetch_all("$base ORDER BY p.is_featured DESC, p.created_at DESC LIMIT 8");
-$bestsellers = fetch_all(
+
+// Each rail skips products already shown higher up the page, so a small
+// catalog doesn't repeat the same items; rails with nothing left are hidden.
+$shown = [];
+$take = function (array $rows, int $limit) use (&$shown): array {
+    $out = [];
+    foreach ($rows as $r) {
+        if (count($out) >= $limit) break;
+        if (isset($shown[$r['id']])) continue;
+        $shown[$r['id']] = true;
+        $out[] = $r;
+    }
+    return $out;
+};
+
+$heroPicks = fetch_all("$base ORDER BY p.is_featured DESC, p.stock_qty > 0 DESC, p.created_at DESC LIMIT 3");
+$deals = $take(fetch_all("$base AND p.compare_price > p.price ORDER BY (p.compare_price - p.price) / p.compare_price DESC LIMIT 24"), 4);
+$featured = $take(fetch_all("$base ORDER BY p.is_featured DESC, p.created_at DESC LIMIT 40"), 10);
+$bestsellers = $take(fetch_all(
     "$base AND p.id IN (SELECT oi.product_id FROM order_items oi JOIN orders o ON o.id = oi.order_id
                         WHERE o.payment_status = 'paid' AND o.created_at >= ?)
-     ORDER BY (SELECT SUM(oi.quantity) FROM order_items oi WHERE oi.product_id = p.id) DESC LIMIT 4",
+     ORDER BY (SELECT SUM(oi.quantity) FROM order_items oi WHERE oi.product_id = p.id) DESC LIMIT 24",
     [date('Y-m-d', strtotime('-90 days'))]
-);
-$newest = fetch_all("$base ORDER BY p.created_at DESC LIMIT 4");
-$stats = fetch_one("SELECT COUNT(*) products, COUNT(DISTINCT p.origin_country) countries FROM products p WHERE " . LIVE_PRODUCT_SQL);
-$customersServed = (int) fetch_value("SELECT COUNT(DISTINCT email) FROM orders WHERE payment_status = 'paid'");
+), 10);
+$newest = $take(fetch_all("$base ORDER BY p.created_at DESC LIMIT 24"), 10);
+
+$maxOff = (int) fetch_value('SELECT MAX(ROUND(100 - p.price / p.compare_price * 100)) FROM products p WHERE p.compare_price > p.price AND ' . LIVE_PRODUCT_SQL);
+$dealPic = $deals[0]['image'] ?? null;
+
+// Categories, with a product photo for each where we have one
 $cats = array_filter(store_categories(), fn($c) => !$c['parent_id']);
-$icons = ['fashion' => 'bi-bag-heart', 'art' => 'bi-palette', 'beauty' => 'bi-flower1', 'jewel' => 'bi-gem', 'food' => 'bi-cup-hot', 'music' => 'bi-music-note-beamed', 'home' => 'bi-house-heart'];
+usort($cats, fn($a, $b) => ((int) $b['products'] > 0) <=> ((int) $a['products'] > 0));
+$catPics = [];
+foreach (fetch_all('SELECT p.category_id, p.image FROM products p WHERE p.image IS NOT NULL AND ' . LIVE_PRODUCT_SQL . ' ORDER BY p.is_featured DESC, p.created_at DESC') as $r) {
+    $catPics[$r['category_id']] ??= $r['image'];
+}
+$icons = [
+    'drink' => 'bi-cup-straw', 'snack' => 'bi-basket2', 'spice' => 'bi-fire', 'sauce' => 'bi-fire', 'meat' => 'bi-egg-fried',
+    'fish' => 'bi-egg-fried', 'fashion' => 'bi-bag-heart', 'beauty' => 'bi-flower1', 'grain' => 'bi-flower3', 'rice' => 'bi-flower3',
+    'flour' => 'bi-flower3', 'frozen' => 'bi-snow', 'home' => 'bi-house-heart', 'art' => 'bi-palette', 'jewel' => 'bi-gem',
+];
 $iconFor = function (string $slug) use ($icons) {
     foreach ($icons as $k => $i) if (strpos($slug, $k) !== false) return $i;
-    return 'bi-stars';
+    return 'bi-basket';
 };
+
+$wa = whatsapp_order_link();
+$phones = support_phones();
+
+/** One horizontally scrolling product rail with its heading. */
+$rail = function (string $id, string $title, string $sub, array $items, string $link, string $linkText, string $icon = '') {
+    if (!$items) return; ?>
+    <section class="h-section">
+      <div class="wrap">
+        <div class="h-head">
+          <div><h2><?php if ($icon): ?><i class="bi <?= $icon ?>"></i> <?php endif; ?><?= e($title) ?></h2><p><?= e($sub) ?></p></div>
+          <div class="h-head-actions">
+            <div class="rail-nav"><button type="button" data-rail="#<?= $id ?>" data-dir="-1" aria-label="Scroll left"><i class="bi bi-chevron-left"></i></button><button type="button" data-rail="#<?= $id ?>" data-dir="1" aria-label="Scroll right"><i class="bi bi-chevron-right"></i></button></div>
+            <a class="h-link" href="<?= url($link) ?>"><?= e($linkText) ?> <i class="bi bi-arrow-right"></i></a>
+          </div>
+        </div>
+        <div class="rail" id="<?= $id ?>">
+          <?php foreach ($items as $p) render_product_card($p); ?>
+        </div>
+      </div>
+    </section>
+<?php };
 
 require __DIR__ . '/partials/header.php';
 ?>
-<section class="hero">
+<section class="h-hero">
   <div class="wrap">
-    <div>
-      <span class="eyebrow"><i class="bi bi-truck"></i> Shipping to all 50 states</span>
-      <h1>The best of <span>Africa</span>, delivered across America.</h1>
-      <p class="lead">Hand-woven kente, raw shea butter, Ethiopian coffee, Maasai beadwork and more — sourced directly from makers across the continent.</p>
-      <div class="ctas">
-        <a class="btn btn-gold btn-lg" href="<?= url('shop.php') ?>">Shop now <i class="bi bi-arrow-right"></i></a>
-        <a class="btn btn-lg btn-outline" href="<?= url('shop.php?sort=newest') ?>">New arrivals</a>
+    <div class="h-hero-copy">
+      <span class="h-pill"><span class="dot"></span> Shipping free to all 50 states</span>
+      <h1>Your <em><span id="heroTyped">African market</span></em>, at your door.</h1>
+      <p>Milo, Peak milk, Malta, chinchin, spices and more — the African brands you grew up with, delivered anywhere in the USA.</p>
+      <div class="h-ctas">
+        <a class="btn btn-primary btn-lg" href="<?= url('shop.php') ?>"><i class="bi bi-basket2"></i> Shop groceries</a>
+        <?php if ($wa): ?><a class="btn btn-lg h-btn-wa" href="<?= e($wa) ?>" target="_blank" rel="noopener"><i class="bi bi-whatsapp"></i> Order on WhatsApp</a><?php endif; ?>
       </div>
-      <div class="hero-stats">
-        <div><strong><?= number_format((int) $stats['products']) ?>+</strong><span>Products</span></div>
-        <div><strong><?= (int) $stats['countries'] ?></strong><span>Countries of origin</span></div>
-        <?php if ($customersServed > 0): ?><div><strong><?= number_format($customersServed) ?>+</strong><span>Happy customers</span></div><?php endif; ?>
+      <div class="h-proof">
+        <div><i class="bi bi-truck"></i><span><strong>Free</strong> shipping</span></div>
+        <div><i class="bi bi-shield-check"></i><span><strong>Secure</strong> checkout</span></div>
+        <div><i class="bi bi-headset"></i><span><strong>Real</strong> people</span></div>
       </div>
     </div>
-    <div class="hero-collage" aria-hidden="true">
-      <?php foreach (array_slice($featured, 0, 4) as $p): ?>
-        <div class="tile"><img src="<?= e(image_url($p['image'])) ?>" alt=""><?php if ($p['origin_country']): ?><span><?= e($p['origin_country']) ?></span><?php endif; ?></div>
-      <?php endforeach; ?>
-    </div>
-  </div>
-</section>
 
-<section class="section">
-  <div class="wrap">
-    <div class="value-props">
-      <div><i class="bi bi-patch-check"></i><strong>Authentic &amp; handmade</strong><span>Every product is sourced and checked by our team.</span></div>
-      <div><i class="bi bi-people"></i><strong>Supports makers</strong><span>We buy directly from artisans and cooperatives.</span></div>
-      <div><i class="bi bi-geo-alt"></i><strong>Tracked delivery</strong><span>Follow your package all the way to your door.</span></div>
-      <div><i class="bi bi-shield-lock"></i><strong>Secure checkout</strong><span>Payments processed by Stripe. Prices in USD.</span></div>
-    </div>
-  </div>
-</section>
-
-<section class="section" style="padding-top:0">
-  <div class="wrap">
-    <div class="section-head"><div><h2>Shop by category</h2><p>From the loom, the kitchen and the studio.</p></div></div>
-    <div class="cat-tiles">
-      <?php foreach ($cats as $c): ?>
-        <a class="cat-tile" href="<?= url('shop.php?category=' . urlencode($c['slug'])) ?>">
-          <div class="ic"><i class="bi <?= $iconFor($c['slug']) ?>"></i></div>
-          <strong><?= e($c['name']) ?></strong><span><?= (int) $c['products'] ?> product<?= (int) $c['products'] === 1 ? '' : 's' ?></span>
+    <div class="h-hero-art">
+      <div class="h-blob"></div>
+      <svg class="h-sticker" viewBox="0 0 120 120" aria-hidden="true">
+        <defs><path id="stickerCircle" d="M60,60 m-44,0 a44,44 0 1,1 88,0 a44,44 0 1,1 -88,0"/></defs>
+        <circle cx="60" cy="60" r="58"/>
+        <text><textPath href="#stickerCircle">FREE SHIPPING • EVERY ORDER • ALL 50 STATES •</textPath></text>
+        <g transform="translate(60 60)"><text class="mid" text-anchor="middle" dy="5">FREE</text></g>
+      </svg>
+      <?php foreach ($heroPicks as $i => $p): $onSale = $p['compare_price'] !== null && $p['compare_price'] > $p['price']; ?>
+        <a class="h-float h-float-<?= $i ?>" href="<?= e(product_url($p)) ?>">
+          <img src="<?= e(image_url($p['image'])) ?>" alt="<?= e($p['name']) ?>" loading="<?= $i ? 'lazy' : 'eager' ?>">
+          <span class="tag"><strong><?= money($p['price']) ?></strong><?php if ($onSale): ?><em>−<?= (int) round(100 - $p['price'] / $p['compare_price'] * 100) ?>%</em><?php endif; ?></span>
         </a>
       <?php endforeach; ?>
     </div>
   </div>
 </section>
 
-<section class="section" style="padding-top:0">
+<?php if ($cats): ?>
+<section class="h-cats">
   <div class="wrap">
-    <div class="section-head"><div><h2>Featured finds</h2><p>Hand-picked by our team this week.</p></div><a class="btn" href="<?= url('shop.php') ?>">View all <i class="bi bi-arrow-right"></i></a></div>
-    <div class="grid-products">
-      <?php foreach ($featured as $p) render_product_card($p); ?>
-    </div>
-  </div>
-</section>
-
-<?php if ($bestsellers): ?>
-<section class="section" style="padding-top:0">
-  <div class="wrap">
-    <div class="section-head"><div><h2>Bestsellers</h2><p>What shoppers loved over the last 90 days.</p></div><a class="btn" href="<?= url('shop.php?sort=popular') ?>">Shop bestsellers</a></div>
-    <div class="grid-products">
-      <?php foreach ($bestsellers as $p) render_product_card($p); ?>
+    <div class="h-cat-row">
+      <a class="h-cat all" href="<?= url('shop.php') ?>"><span class="bubble"><i class="bi bi-grid"></i></span><strong>Shop all</strong></a>
+      <?php foreach ($cats as $c): $n = (int) $c['products']; $pic = $catPics[$c['id']] ?? null; ?>
+        <a class="h-cat<?= $n ? '' : ' soon' ?>" href="<?= url('shop.php?category=' . urlencode($c['slug'])) ?>">
+          <span class="bubble"><?php if ($pic): ?><img src="<?= e(image_url($pic)) ?>" alt="" loading="lazy"><?php else: ?><i class="bi <?= $iconFor($c['slug']) ?>"></i><?php endif; ?></span>
+          <strong><?= e($c['name']) ?></strong><small><?= $n ? $n . ' item' . ($n === 1 ? '' : 's') : 'Coming soon' ?></small>
+        </a>
+      <?php endforeach; ?>
     </div>
   </div>
 </section>
 <?php endif; ?>
 
-<section class="section" style="padding-top:0">
-  <div class="wrap">
-    <div class="sell-band">
+<section class="h-section h-promos-wrap">
+  <div class="wrap h-promos">
+    <a class="h-promo deal" href="<?= url('shop.php?sale=1') ?>">
       <div>
-        <h2>From the makers' hands to your home.</h2>
-        <p class="text-2">We travel to markets and workshops across Africa to find pieces made the traditional way, then bring them to the US so you don't have to wait on international shipping.</p>
-        <ul>
-          <li><i class="bi bi-check-circle-fill"></i> Fair prices paid directly to artisans and cooperatives</li>
-          <li><i class="bi bi-check-circle-fill"></i> Every item checked by our team before it ships</li>
-          <li><i class="bi bi-check-circle-fill"></i> Easy returns within 14 days of delivery</li>
-        </ul>
+        <span class="kicker">Today's deals</span>
+        <h3><?= $maxOff > 0 ? "Save up to {$maxOff}%" : 'Fresh deals every week' ?></h3>
+        <p>Big markdowns on pantry favourites — while stocks last.</p>
+        <span class="go">Shop deals <i class="bi bi-arrow-right"></i></span>
       </div>
-      <div style="text-align:center">
-        <a class="btn btn-primary btn-lg" href="<?= url('shop.php') ?>"><i class="bi bi-bag"></i> Start shopping</a>
-        <p class="small muted" style="margin-top:10px">Questions? <a href="mailto:<?= e(setting('support_email', MAIL_FROM)) ?>">Email our team</a></p>
+      <?php if ($dealPic): ?><img src="<?= e(image_url($dealPic)) ?>" alt="" loading="lazy"><?php endif; ?>
+    </a>
+    <?php if ($wa): ?>
+    <a class="h-promo wa" href="<?= e($wa) ?>" target="_blank" rel="noopener">
+      <div>
+        <span class="kicker">No account needed</span>
+        <h3>Send us your list on WhatsApp</h3>
+        <p>Tell us what you need — we'll confirm your total and ship it free.</p>
+        <span class="go">Start a chat <i class="bi bi-arrow-right"></i></span>
       </div>
+      <i class="bi bi-whatsapp big-ic"></i>
+    </a>
+    <?php endif; ?>
+  </div>
+</section>
+
+<?php $rail('railDeals', "Today's deals", 'Our biggest markdowns right now.', $deals, 'shop.php?sale=1', 'All deals', 'bi-lightning-charge-fill'); ?>
+<?php $rail('railPopular', 'Popular picks', 'Pantry staples our customers keep coming back for.', $featured, 'shop.php', 'Shop all'); ?>
+
+<section class="h-section">
+  <div class="wrap">
+    <div class="h-steps">
+      <div class="h-steps-head">
+        <h2>How it works</h2>
+        <p>From our shelves to your kitchen in three easy steps.</p>
+      </div>
+      <ol>
+        <li><span class="num">1</span><i class="bi bi-basket2"></i><strong>Pick your favourites</strong><span>Browse drinks, snacks, spices and more — or just send us your list.</span></li>
+        <li><span class="num">2</span><i class="bi bi-credit-card-2-front"></i><strong>Check out your way</strong><span>Pay securely online with card, Apple Pay or Google Pay, or order by WhatsApp or phone.</span></li>
+        <li><span class="num">3</span><i class="bi bi-box-seam"></i><strong>Delivered free</strong><span>We pack and ship it free, with tracking all the way to your door.</span></li>
+      </ol>
     </div>
   </div>
 </section>
 
-<section class="section" style="padding-top:0">
+<?php $rail('railBest', 'Bestsellers', 'What shoppers loved over the last 90 days.', $bestsellers, 'shop.php?sort=popular', 'Shop bestsellers', 'bi-fire'); ?>
+<?php $rail('railNew', 'Just arrived', 'The newest additions to the shop.', $newest, 'shop.php?sort=newest', "See what's new", 'bi-stars'); ?>
+
+<section class="h-section">
   <div class="wrap">
-    <div class="section-head"><div><h2>Just arrived</h2><p>The newest additions to the shop.</p></div><a class="btn" href="<?= url('shop.php?sort=newest') ?>">See what's new</a></div>
-    <div class="grid-products">
-      <?php foreach ($newest as $p) render_product_card($p); ?>
+    <div class="h-contact">
+      <div class="h-contact-copy">
+        <h2>Can't find what you're looking for?</h2>
+        <p>Tell us — we stock new products every week and we're happy to help you order.</p>
+      </div>
+      <div class="h-contact-actions">
+        <?php if ($wa): ?><a class="btn btn-lg h-btn-wa solid" href="<?= e($wa) ?>" target="_blank" rel="noopener"><i class="bi bi-whatsapp"></i> WhatsApp us</a><?php endif; ?>
+        <?php foreach ($phones as $ph): ?><a class="btn btn-lg h-btn-call" href="tel:<?= e(phone_href($ph)) ?>"><i class="bi bi-telephone"></i> <?= e($ph) ?></a><?php endforeach; ?>
+      </div>
     </div>
   </div>
 </section>
-<?php require __DIR__ . '/partials/footer.php'; ?>
+<?php
+$pageScripts = '<script src="https://cdn.jsdelivr.net/npm/typed.js@2.1.0/dist/typed.umd.js"></script>
+<script>
+(function () {
+  var el = document.getElementById("heroTyped");
+  if (!el || !window.Typed || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  new Typed(el, {
+    strings: ["African market", "Milo &amp; Malta", "jollof spices", "Peak milk", "chinchin fix", "taste of home"],
+    typeSpeed: 70,
+    backSpeed: 40,
+    backDelay: 1800,
+    startDelay: 1200,
+    loop: true,
+    cursorChar: "|"
+  });
+})();
+</script>';
+require __DIR__ . '/partials/footer.php'; ?>

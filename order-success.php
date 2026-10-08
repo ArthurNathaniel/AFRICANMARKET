@@ -19,7 +19,8 @@ if ($sessionId !== '' && $order['payment_status'] !== 'paid') {
         error_log('Stripe confirm failed: ' . $ex->getMessage());
     }
 }
-if ($order['payment_status'] === 'paid') {
+// Only clear the cart for the order checked out from it (not for a paid WhatsApp invoice).
+if ($order['payment_status'] === 'paid' && (int) ($_SESSION['pending_order_id'] ?? 0) === (int) $order['id']) {
     cart_clear();
     unset($_SESSION['pending_order_id']);
 }

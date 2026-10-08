@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
   <title><?= e($pageTitle) ?> · <?= e($storeName) ?> Admin</title>
-  <link rel="icon" type="image/svg+xml" href="<?= asset('img/logo-mark.svg') ?>">
+  <?= favicon_tags() ?>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap" rel="stylesheet">
@@ -16,7 +16,7 @@
 <body>
 <div class="auth-page">
   <section class="auth-art">
-    <img class="logo" src="<?= asset('img/logo-light.svg') ?>" alt="<?= e($storeName) ?>">
+    <?= brand_lockup('light', 'logo brand-lg') ?>
     <div>
       <h2>Bringing the best of <span>Africa</span> to every American doorstep.</h2>
       <p>Manage products, fulfil orders, track payments and look after customers — all from one place.</p>
@@ -30,7 +30,7 @@
   </section>
   <section class="auth-form-wrap">
     <div class="auth-form">
-      <img class="mobile-logo" src="<?= asset('img/logo.svg') ?>" alt="<?= e($storeName) ?>">
+      <?= brand_lockup('dark', 'mobile-logo') ?>
       <?php foreach (get_flashes() as $_flash): ?>
         <div class="alert alert-<?= e($_flash['type']) ?>" role="alert"><div><?= e($_flash['message']) ?></div></div>
       <?php endforeach; ?>

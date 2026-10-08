@@ -62,7 +62,8 @@ if (is_post()) {
                 redirect(stripe_checkout_url($order));
             } catch (RuntimeException $ex) {
                 error_log('Stripe checkout failed: ' . $ex->getMessage());
-                $errors[] = 'We couldn\'t start the secure payment page. Please try again in a moment.';
+                $errors[] = 'We couldn\'t start the secure payment page. Please try again in a moment.'
+                    . (stripe_test_mode() ? ' (Stripe test mode: ' . $ex->getMessage() . ')' : '');
             }
         } else {
             // Development only: simulate a successful card payment.
@@ -144,6 +145,14 @@ require __DIR__ . '/partials/header.php';
         <h2 class="step-title"><b>4</b> Payment</h2>
         <?php if (stripe_enabled()): ?>
           <p class="text-2" style="margin:0"><i class="bi bi-shield-lock"></i> You'll enter your card on Stripe's secure page, then come straight back here. Apple Pay and Google Pay are supported where available.</p>
+          <?php if (stripe_test_mode()): ?>
+            <div class="alert alert-warning" style="margin:14px 0 0"><i class="bi bi-tools"></i><div>
+              <strong>Stripe test mode:</strong> no real money is charged. On the Stripe page use one of these cards, any future expiry date, any 3-digit CVC and any ZIP:
+              <?php foreach (STRIPE_TEST_CARDS as $card => $result): ?>
+                <div><code><?= e($card) ?></code> — <?= e($result) ?></div>
+              <?php endforeach; ?>
+            </div></div>
+          <?php endif; ?>
         <?php elseif (test_payments_enabled()): ?>
           <div class="alert alert-warning" style="margin:0"><i class="bi bi-tools"></i><div><strong>Test mode:</strong> Stripe isn't configured yet, so placing the order simulates a successful payment. Add your Stripe keys in Admin → Settings → Payment gateways to take real payments.</div></div>
         <?php else: ?>

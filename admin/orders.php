@@ -12,6 +12,29 @@ if (is_post()) {
     $order = fetch_one('SELECT * FROM orders WHERE id = ?', [$id]);
     if (!$order) { flash('error', 'Order not found.'); redirect('admin/orders.php'); }
 
+    // WhatsApp order → invoice: set customer contact and pricing before sending the payment link.
+    if (input('action') === 'invoice') {
+        if ($order['payment_status'] !== 'unpaid' || in_array($order['status'], ['cancelled', 'refunded'], true)) {
+            flash('error', 'Only unpaid, open orders can be invoiced.');
+            redirect("admin/orders.php?id=$id");
+        }
+        $name = input('ship_name');
+        $phone = input('ship_phone');
+        $email = strtolower(input('email'));
+        if ($phone !== '' && strlen(preg_replace('/\D/', '', $phone)) < 10) {
+            flash('error', 'Enter the customer\'s WhatsApp number with the country code (e.g. +1 555 123 4567).');
+        } elseif ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            flash('error', 'That email address doesn\'t look right.');
+        } elseif ($err = update_invoice_totals($order, (float) input_decimal('shipping'), (float) input_decimal('discount'))) {
+            flash('error', $err);
+        } else {
+            q('UPDATE orders SET ship_name = ?, ship_phone = ?, email = ? WHERE id = ?', [$name ?: null, $phone ?: null, $email, $id]);
+            log_activity('invoice_update', "#{$order['order_number']}");
+            flash('success', 'Invoice ready — send it to the customer on WhatsApp.');
+        }
+        redirect("admin/orders.php?id=$id");
+    }
+
     $status = input('status');
     $payment = input('payment_status');
     if (!in_array($status, $orderStatuses, true) || !in_array($payment, $paymentStatuses, true)) {
@@ -85,7 +108,7 @@ if ($id) {
     <div class="page-head">
       <div>
         <div><?= status_badge($o['status']) ?> <?= status_badge($o['payment_status']) ?></div>
-        <p>Placed <?= format_date($o['created_at'], 'M j, Y \a\t g:i A') ?> · <?= array_sum(array_column($items, 'quantity')) ?> item(s)
+        <p><?= is_whatsapp_order($o) ? '<i class="bi bi-whatsapp"></i> WhatsApp order · ' : '' ?>Placed <?= format_date($o['created_at'], 'M j, Y \a\t g:i A') ?> · <?= array_sum(array_column($items, 'quantity')) ?> item(s)
           <?php if ($o['shipped_at']): ?> · shipped <?= format_date($o['shipped_at']) ?><?php endif; ?>
           <?php if ($o['delivered_at']): ?> · delivered <?= format_date($o['delivered_at']) ?><?php endif; ?></p>
       </div>
@@ -106,7 +129,7 @@ if ($id) {
               <tr>
                 <td><div class="cell-main"><img class="thumb" src="<?= e(image_url($it['image'])) ?>" alt="">
                   <div><?php if ($it['product_id']): ?><a class="title" href="<?= url('admin/product-edit.php?id=' . $it['product_id']) ?>"><?= e($it['product_name']) ?></a><?php else: ?><span class="title"><?= e($it['product_name']) ?></span><?php endif; ?>
-                  <div class="meta">SKU <?= e($it['sku'] ?: '—') ?><?= $it['stock_qty'] !== null ? ' · ' . (int) $it['stock_qty'] . ' left in stock' : '' ?></div></div></div></td>
+                  <div class="meta"><?= $it['stock_qty'] !== null ? (int) $it['stock_qty'] . ' left in stock' : '' ?></div></div></div></td>
                 <td class="num"><?= money($it['unit_price']) ?></td>
                 <td class="num"><?= (int) $it['quantity'] ?></td>
                 <td class="num strong"><?= money($it['line_total']) ?></td>
@@ -138,6 +161,34 @@ if ($id) {
       </div>
 
       <div class="grid" style="align-content:start">
+        <?php if ($o['payment_status'] === 'unpaid' && !in_array($o['status'], ['cancelled', 'refunded'], true)): $payLink = invoice_url($o); ?>
+          <div class="card">
+            <div class="card-head"><h2><i class="bi bi-whatsapp"></i> <?= is_whatsapp_order($o) ? 'WhatsApp invoice' : 'Payment link' ?></h2></div>
+            <?php if (is_whatsapp_order($o)): ?>
+              <form method="post" class="card-body" style="border-bottom:1px solid var(--border)">
+                <?= csrf_field() ?><input type="hidden" name="id" value="<?= $id ?>"><input type="hidden" name="action" value="invoice">
+                <p class="small muted mt-0"><strong>Step 1.</strong> Add the customer's details from the chat and any shipping fee or discount.</p>
+                <div class="field"><label for="inv_name">Customer name</label><input class="input" id="inv_name" name="ship_name" value="<?= e($o['ship_name']) ?>"></div>
+                <div class="field"><label for="inv_phone">WhatsApp number</label><input class="input" type="tel" id="inv_phone" name="ship_phone" value="<?= e($o['ship_phone']) ?>" placeholder="+1 555 123 4567"></div>
+                <div class="field"><label for="inv_email">Email <span class="muted">(optional)</span></label><input class="input" type="email" id="inv_email" name="email" value="<?= e($o['email']) ?>"></div>
+                <div class="form-row">
+                  <div class="field"><label for="inv_ship">Shipping fee</label><div class="input-group"><span class="addon">$</span><input class="input" id="inv_ship" name="shipping" inputmode="decimal" value="<?= e(number_format((float) $o['shipping_total'], 2, '.', '')) ?>"></div></div>
+                  <div class="field"><label for="inv_disc">Discount</label><div class="input-group"><span class="addon">$</span><input class="input" id="inv_disc" name="discount" inputmode="decimal" value="<?= e(number_format((float) $o['discount_total'], 2, '.', '')) ?>"></div></div>
+                </div>
+                <button class="btn btn-block" type="submit"><i class="bi bi-receipt"></i>Save &amp; update invoice</button>
+              </form>
+            <?php endif; ?>
+            <div class="card-body">
+              <p class="small muted mt-0"><?= is_whatsapp_order($o) ? '<strong>Step 2.</strong> ' : '' ?>Send the invoice on WhatsApp. The customer opens the link, <?= $o['email'] === '' || !$o['ship_line1'] ? 'adds their missing details, ' : '' ?>and pays <strong><?= money($o['grand_total']) ?></strong> by card on Stripe. The order is marked paid automatically.</p>
+              <a class="btn btn-primary btn-block" href="<?= e(invoice_whatsapp_url($o)) ?>" target="_blank" rel="noopener"><i class="bi bi-whatsapp"></i>Send invoice on WhatsApp</a>
+              <?php if (!$o['ship_phone']): ?><p class="small muted" style="margin:8px 0 0">No phone on file — WhatsApp will ask you to pick the contact.</p><?php endif; ?>
+              <div class="input-group" style="margin-top:12px">
+                <input class="input" id="payLink" value="<?= e($payLink) ?>" readonly aria-label="Payment link" onclick="this.select()">
+                <button class="btn" type="button" id="copyPayLink"><i class="bi bi-clipboard"></i>Copy</button>
+              </div>
+            </div>
+          </div>
+        <?php endif; ?>
         <form class="card" method="post">
           <?= csrf_field() ?><input type="hidden" name="id" value="<?= $id ?>">
           <div class="card-head"><h2>Fulfilment</h2></div>
@@ -171,14 +222,28 @@ if ($id) {
           <div class="card-head"><h2>Customer</h2></div>
           <div class="card-body"><dl class="dl">
             <dt>Name</dt><dd><?php if ($o['customer_id']): ?><a href="<?= url('admin/customers.php?view=' . $o['customer_id']) ?>"><?= e($o['first_name'] . ' ' . $o['last_name']) ?></a> <span class="small muted"><?= $previousOrders ? "· $previousOrders previous order(s)" : '· first order' ?></span><?php else: ?><?= e($o['ship_name']) ?> <span class="muted">(guest)</span><?php endif; ?></dd>
-            <dt>Email</dt><dd><a href="mailto:<?= e($o['email']) ?>"><?= e($o['email']) ?></a></dd>
+            <dt>Email</dt><dd><?php if ($o['email'] !== ''): ?><a href="mailto:<?= e($o['email']) ?>"><?= e($o['email']) ?></a><?php else: ?>—<?php endif; ?></dd>
             <dt>Phone</dt><dd><?= e($o['ship_phone'] ?: '—') ?></dd>
-            <dt>Ship to</dt><dd><?= e($o['ship_name']) ?><br><?= e($o['ship_line1']) ?><br><?php if ($o['ship_line2']): ?><?= e($o['ship_line2']) ?><br><?php endif; ?><?= e($o['ship_city']) ?>, <?= e($o['ship_state']) ?> <?= e($o['ship_zip']) ?><br>United States</dd>
+            <dt>Ship to</dt><dd><?php if ($o['ship_line1']): ?><?= e($o['ship_name']) ?><br><?= e($o['ship_line1']) ?><br><?php if ($o['ship_line2']): ?><?= e($o['ship_line2']) ?><br><?php endif; ?><?= e($o['ship_city']) ?>, <?= e($o['ship_state']) ?> <?= e($o['ship_zip']) ?><br>United States<?php else: ?><span class="muted">Not provided yet — the customer adds it when paying.</span><?php endif; ?></dd>
           </dl></div>
         </div>
       </div>
     </div>
-    <?php require __DIR__ . '/includes/footer.php';
+    <?php
+    $pageScripts = '<script>
+    (function () {
+      var b = document.getElementById("copyPayLink");
+      if (!b) return;
+      b.addEventListener("click", function () {
+        var f = document.getElementById("payLink");
+        f.select();
+        (navigator.clipboard ? navigator.clipboard.writeText(f.value) : Promise.reject()).catch(function () { document.execCommand("copy"); });
+        b.innerHTML = "<i class=\"bi bi-check2\"></i>Copied";
+        setTimeout(function () { b.innerHTML = "<i class=\"bi bi-clipboard\"></i>Copy"; }, 2000);
+      });
+    })();
+    </script>';
+    require __DIR__ . '/includes/footer.php';
     exit;
 }
 
@@ -187,6 +252,7 @@ if ($id) {
  * ======================================================================= */
 $status  = input('status');
 $payment = input('payment');
+$source  = input('source');
 $search  = input('q');
 $from    = input('from');
 $to      = input('to');
@@ -194,6 +260,8 @@ $to      = input('to');
 $where = ['1=1']; $params = [];
 if ($status !== '')  { $where[] = 'o.status = ?'; $params[] = $status; }
 if ($payment !== '') { $where[] = 'o.payment_status = ?'; $params[] = $payment; }
+if ($source === 'whatsapp') { $where[] = 'o.shipping_method = ?'; $params[] = WHATSAPP_ORDER_METHOD; }
+if ($source === 'website') { $where[] = '(o.shipping_method IS NULL OR o.shipping_method <> ?)'; $params[] = WHATSAPP_ORDER_METHOD; }
 if ($search !== '')  { $where[] = '(o.order_number LIKE ? OR o.email LIKE ? OR o.ship_name LIKE ? OR o.tracking_number LIKE ?)'; array_push($params, "%$search%", "%$search%", "%$search%", "%$search%"); }
 if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $from)) { $where[] = 'o.created_at >= ?'; $params[] = "$from 00:00:00"; }
 if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $to))   { $where[] = 'o.created_at <= ?'; $params[] = "$to 23:59:59"; }
@@ -210,6 +278,10 @@ $statusCounts = array_column(fetch_all('SELECT status, COUNT(*) n FROM orders GR
 
 require __DIR__ . '/includes/header.php';
 ?>
+<div class="page-head">
+  <div><p class="mt-0">Website orders and WhatsApp invoices.</p></div>
+  <a class="btn btn-primary" href="<?= url('admin/invoice.php') ?>"><i class="bi bi-receipt"></i>New invoice</a>
+</div>
 <div class="card">
   <div class="tabs">
     <a href="<?= e(query_with(['status' => null, 'page' => null])) ?>" class="<?= $status === '' ? 'active' : '' ?>">All<span class="count"><?= array_sum($statusCounts) ?></span></a>
@@ -221,10 +293,11 @@ require __DIR__ . '/includes/header.php';
     <?php if ($status !== ''): ?><input type="hidden" name="status" value="<?= e($status) ?>"><?php endif; ?>
     <div class="search"><i class="bi bi-search"></i><input class="input" name="q" value="<?= e($search) ?>" placeholder="Order #, email, name or tracking…"></div>
     <select name="payment"><option value="">Any payment</option><?php foreach ($paymentStatuses as $s): ?><option value="<?= $s ?>" <?= $payment === $s ? 'selected' : '' ?>><?= ucfirst($s) ?></option><?php endforeach; ?></select>
+    <select name="source"><option value="">Any source</option><option value="website" <?= $source === 'website' ? 'selected' : '' ?>>Website</option><option value="whatsapp" <?= $source === 'whatsapp' ? 'selected' : '' ?>>WhatsApp</option></select>
     <input class="input" type="date" name="from" value="<?= e($from) ?>" aria-label="From date">
     <input class="input" type="date" name="to" value="<?= e($to) ?>" aria-label="To date">
     <button class="btn" type="submit">Filter</button>
-    <?php if ($search || $payment || $from || $to): ?><a class="btn btn-ghost" href="<?= url('admin/orders.php' . ($status ? '?status=' . urlencode($status) : '')) ?>">Clear</a><?php endif; ?>
+    <?php if ($search || $payment || $source || $from || $to): ?><a class="btn btn-ghost" href="<?= url('admin/orders.php' . ($status ? '?status=' . urlencode($status) : '')) ?>">Clear</a><?php endif; ?>
   </form>
   <div class="table-wrap">
     <table class="table">
@@ -232,8 +305,8 @@ require __DIR__ . '/includes/header.php';
       <tbody>
       <?php foreach ($orders as $o): ?>
         <tr>
-          <td><a class="strong" href="?id=<?= $o['id'] ?>">#<?= e($o['order_number']) ?></a><div class="small muted"><?= format_date($o['created_at'], 'M j, g:i A') ?></div></td>
-          <td><?= e($o['ship_name']) ?><div class="small muted"><?= e($o['ship_city']) ?>, <?= e($o['ship_state']) ?></div></td>
+          <td><a class="strong" href="?id=<?= $o['id'] ?>">#<?= e($o['order_number']) ?></a><?php if (is_whatsapp_order($o)): ?> <span class="badge badge-success" title="WhatsApp order"><i class="bi bi-whatsapp"></i> WhatsApp</span><?php endif; ?><div class="small muted"><?= format_date($o['created_at'], 'M j, g:i A') ?></div></td>
+          <td><?= $o['ship_name'] ? e($o['ship_name']) : '<span class="muted">Name not added yet</span>' ?><div class="small muted"><?= $o['ship_city'] ? e($o['ship_city']) . ', ' . e($o['ship_state']) : e($o['ship_phone'] ?? '') ?></div></td>
           <td class="small text-2" style="max-width:260px"><?= (int) $o['items'] ?> × <?= e(mb_strimwidth((string) $o['products'], 0, 70, '…')) ?></td>
           <td><?= status_badge($o['status']) ?><?php if ($o['tracking_number']): ?><div class="small muted"><i class="bi bi-truck"></i> <?= e($o['carrier']) ?></div><?php endif; ?></td>
           <td><?= status_badge($o['payment_status']) ?></td>

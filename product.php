@@ -120,6 +120,9 @@ require __DIR__ . '/partials/header.php';
           <button class="btn btn-lg" type="submit" aria-pressed="<?= $wished ? 'true' : 'false' ?>"><i class="bi bi-heart<?= $wished ? '-fill' : '' ?>" style="<?= $wished ? 'color:var(--terra-500)' : '' ?>"></i><?= $wished ? 'Saved' : 'Save' ?></button>
         </form>
       </div>
+      <?php if (!$isPreview && ($wa = whatsapp_order_link((int) $p['id']))): ?>
+        <a class="btn btn-whatsapp btn-lg btn-block" href="<?= e($wa) ?>" target="_blank" rel="noopener"><i class="bi bi-whatsapp"></i> Order via WhatsApp</a>
+      <?php endif; ?>
       <?php if ($inCart): ?><p class="small muted"><i class="bi bi-bag-check"></i> <?= (int) $inCart ?> already in your <a href="<?= url('cart.php') ?>">cart</a>.</p><?php endif; ?>
 
       <div class="facts">
@@ -134,7 +137,7 @@ require __DIR__ . '/partials/header.php';
   <div class="tabs-block">
     <h2 style="font-size:24px;margin-bottom:12px">About this item</h2>
     <div class="prose"><?= e($p['description'] ?: 'No description provided.') ?></div>
-    <p class="small muted" style="margin-top:14px">SKU <?= e($p['sku'] ?: '—') ?> · Shipping weight <?= e($p['weight_lb']) ?> lb<?= $p['origin_country'] ? ' · Made in ' . e($p['origin_country']) : '' ?></p>
+    <p class="small muted" style="margin-top:14px">Shipping weight <?= e($p['weight_lb']) ?> lb<?= $p['origin_country'] ? ' · Made in ' . e($p['origin_country']) : '' ?></p>
   </div>
 
   <div class="tabs-block mt" id="reviews">

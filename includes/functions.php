@@ -94,6 +94,21 @@ function asset(string $path): string
     return url('assets/' . ltrim($path, '/'));
 }
 
+/** Logo badge + wordmark. $tone: 'dark' text for light backgrounds, 'light' for dark ones. */
+function brand_lockup(string $tone = 'dark', string $class = ''): string
+{
+    return '<span class="brand-lockup brand-' . $tone . ($class ? ' ' . $class : '') . '">'
+         . '<img src="' . asset('img/logo-badge-160.png') . '" alt="" width="160" height="160">'
+         . '<span class="brand-words"><strong>Jenmond</strong><small>Mobile African Market</small></span></span>';
+}
+
+/** Favicon links for <head>. */
+function favicon_tags(): string
+{
+    return '<link rel="icon" type="image/png" sizes="64x64" href="' . asset('img/favicon.png') . '">'
+         . "\n  " . '<link rel="apple-touch-icon" href="' . asset('img/apple-touch-icon.png') . '">';
+}
+
 function e($value): string
 {
     return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
@@ -218,6 +233,27 @@ function save_setting(string $key, ?string $value): void
 {
     q('INSERT INTO settings (setting_key, setting_value) VALUES (?, ?)
        ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)', [$key, $value]);
+}
+
+/** Support phone numbers from settings (comma-separated). */
+function support_phones(): array
+{
+    return array_values(array_filter(array_map('trim', explode(',', (string) setting('support_phone', '')))));
+}
+
+/** tel: link target for a US phone number, e.g. "(987) 908-6393" → "+19879086393". */
+function phone_href(string $phone): string
+{
+    $digits = preg_replace('/\D/', '', $phone);
+    return strlen($digits) === 10 ? '+1' . $digits : '+' . $digits;
+}
+
+/** WhatsApp chat link with a prefilled message, or '' when no WhatsApp number is set. */
+function whatsapp_url(string $text = ''): string
+{
+    $number = (string) setting('whatsapp_number', '');
+    if ($number === '') return '';
+    return 'https://wa.me/' . ltrim(phone_href($number), '+') . ($text !== '' ? '?text=' . rawurlencode($text) : '');
 }
 
 /* ---------------------------------------------------------------------------

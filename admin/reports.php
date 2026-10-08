@@ -159,7 +159,7 @@ require __DIR__ . '/includes/header.php';
     <div class="card-head"><div><h2>Top US states</h2><div class="sub">By order value</div></div></div>
     <div class="table-wrap"><table class="table"><thead><tr><th>State</th><th class="num">Orders</th><th class="num">Revenue</th><th style="width:34%"></th></tr></thead><tbody>
       <?php $maxState = $byState ? max(array_column($byState, 'total')) : 1; foreach ($byState as $s): ?>
-        <tr><td class="strong"><?= e($states[$s['ship_state']] ?? $s['ship_state']) ?></td><td class="num"><?= (int) $s['orders'] ?></td><td class="num"><?= money($s['total']) ?></td>
+        <tr><td class="strong"><?= $s['ship_state'] === null ? '<span class="muted">No address</span>' : e($states[$s['ship_state']] ?? $s['ship_state']) ?></td><td class="num"><?= (int) $s['orders'] ?></td><td class="num"><?= money($s['total']) ?></td>
           <td><div style="height:10px;border-radius:0 4px 4px 0;background:#16794f;width:<?= round($s['total'] / $maxState * 100, 1) ?>%"></div></td></tr>
       <?php endforeach; ?>
       <?php if (!$byState): ?><tr><td colspan="4" class="empty">No sales in this period.</td></tr><?php endif; ?>

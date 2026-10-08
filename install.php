@@ -49,7 +49,7 @@ if (is_post()) {
             $defaults = [
                 'store_name' => APP_NAME, 'store_tagline' => APP_TAGLINE, 'support_email' => $email,
                 'tax_rate' => '0', 'low_stock_threshold' => '5',
-                'order_prefix' => 'JAM', 'stripe_mode' => 'test', 'paypal_mode' => 'sandbox',
+                'order_prefix' => 'JAM', 'stripe_mode' => 'test',
                 'ship_processing_days' => '1',
                 'ship_origin_note' => 'Orders usually ship within 1–2 business days.',
                 'ship_customs_note' => '',

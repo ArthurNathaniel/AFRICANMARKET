@@ -1,5 +1,6 @@
 <?php
 require __DIR__ . '/includes/bootstrap.php';
+require_once dirname(__DIR__) . '/includes/shop.php';
 
 $tabs = [
     'general'  => ['Store', 'bi-shop-window', ['super_admin', 'admin']],
@@ -11,11 +12,12 @@ $tabs = [
 $tab = input('tab', admin_can('super_admin', 'admin') ? 'general' : 'profile');
 if (!isset($tabs[$tab]) || !admin_can(...$tabs[$tab][2])) $tab = 'profile';
 
-$secretKeys = ['stripe_secret_key', 'stripe_webhook_secret', 'paypal_secret'];
+$secretKeys = ['stripe_test_secret_key', 'stripe_test_webhook_secret', 'stripe_live_secret_key', 'stripe_live_webhook_secret'];
 $fields = [
-    'general'  => ['store_name', 'store_tagline', 'support_email', 'support_phone', 'business_address'],
+    'general'  => ['store_name', 'store_tagline', 'support_email', 'support_phone', 'whatsapp_number', 'business_address'],
     'commerce' => ['tax_rate', 'order_prefix', 'low_stock_threshold'],
-    'payments' => ['stripe_mode', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_webhook_secret', 'paypal_mode', 'paypal_client_id', 'paypal_secret'],
+    'payments' => ['stripe_mode', 'stripe_test_publishable_key', 'stripe_test_secret_key', 'stripe_test_webhook_secret',
+                   'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_live_webhook_secret'],
 ];
 $errors = [];
 
@@ -31,6 +33,20 @@ if (is_post()) {
             if ($tax === null || $tax < 0 || $tax > 30) $errors[] = 'Tax rate must be between 0 and 30%.';
             if (!preg_match('/^[A-Z0-9]{2,6}$/', strtoupper(input('order_prefix')))) $errors[] = 'Order prefix must be 2–6 letters or numbers.';
         }
+        if ($action === 'payments') {
+            if (!in_array(input('stripe_mode'), ['test', 'live'], true)) $errors[] = 'Choose test or live mode.';
+            foreach (['test' => 'Test', 'live' => 'Live'] as $m => $label) {
+                $pk = input("stripe_{$m}_publishable_key");
+                $sk = input("stripe_{$m}_secret_key");
+                $wh = input("stripe_{$m}_webhook_secret");
+                if ($pk !== '' && strpos($pk, "pk_{$m}_") !== 0) $errors[] = "$label publishable key must start with pk_{$m}_";
+                if ($sk !== '' && !preg_match("/^(sk|rk)_{$m}_/", $sk)) $errors[] = "$label secret key must start with sk_{$m}_ (or rk_{$m}_)";
+                if ($wh !== '' && strpos($wh, 'whsec_') !== 0) $errors[] = "$label webhook signing secret must start with whsec_";
+            }
+            if (input('stripe_mode') === 'live' && input('stripe_live_secret_key') === '' && stripe_key('secret_key', 'live') === '') {
+                $errors[] = 'Add your live secret key before switching to live mode.';
+            }
+        }
         if (!$errors) {
             foreach ($fields[$action] as $key) {
                 $value = input($key);
@@ -43,6 +59,17 @@ if (is_post()) {
             redirect('admin/settings.php?tab=' . $action);
         }
         $tab = $action;
+    }
+
+    if ($action === 'stripe_check') {
+        require_role('super_admin');
+        $mode = input('mode') === 'live' ? 'live' : 'test';
+        try {
+            flash('success', stripe_check_connection($mode));
+        } catch (RuntimeException $ex) {
+            flash('error', 'Stripe ' . $mode . ' connection failed: ' . $ex->getMessage());
+        }
+        redirect('admin/settings.php?tab=payments');
     }
 
     if ($action === 'team') {
@@ -92,7 +119,10 @@ if (is_post()) {
 
 $v = fn($k, $d = '') => e($_POST[$k] ?? setting($k, $d));
 $sel = fn($k, $x, $d = '') => (string) ($_POST[$k] ?? setting($k, $d)) === (string) $x ? 'selected' : '';
-$secretHint = fn($k) => setting($k) ? 'Saved (ends in …' . e(substr((string) setting($k), -4)) . '). Leave blank to keep.' : 'Not set';
+$stripeHint = function (string $mode, string $name) {
+    $val = stripe_key($name, $mode);
+    return $val !== '' ? 'Saved (ends in …' . e(substr($val, -4)) . '). Leave blank to keep.' : 'Not set';
+};
 
 $pageTitle = 'Settings';
 $activeNav = 'settings';
@@ -117,8 +147,10 @@ require __DIR__ . '/includes/header.php';
         </div>
         <div class="form-row">
           <div class="field"><label for="support_email">Support email</label><input class="input" type="email" id="support_email" name="support_email" value="<?= $v('support_email') ?>" required></div>
-          <div class="field"><label for="support_phone">Support phone</label><input class="input" id="support_phone" name="support_phone" value="<?= $v('support_phone') ?>" placeholder="+1 (555) 000-0000"></div>
+          <div class="field"><label for="support_phone">Support phone</label><input class="input" id="support_phone" name="support_phone" value="<?= $v('support_phone') ?>" placeholder="+1 (555) 000-0000"><div class="hint">Separate multiple numbers with commas.</div></div>
         </div>
+        <div class="field"><label for="whatsapp_number">WhatsApp number for orders</label><input class="input" id="whatsapp_number" name="whatsapp_number" value="<?= $v('whatsapp_number') ?>" placeholder="(555) 000-0000">
+          <div class="hint">Shows “Order via WhatsApp” buttons in the store. Leave blank to hide them.</div></div>
         <div class="field"><label for="business_address">US business address</label><textarea class="input" id="business_address" name="business_address" rows="3"><?= $v('business_address') ?></textarea>
           <div class="hint">Shown on invoices and used as the returns address.</div></div>
         <div class="form-actions" style="justify-content:flex-start"><button class="btn btn-primary" type="submit">Save store settings</button></div>
@@ -133,7 +165,7 @@ require __DIR__ . '/includes/header.php';
         </div>
         <div class="form-row">
           <div class="field"><label for="tax_rate">Default sales tax rate</label><div class="input-group"><input class="input" id="tax_rate" name="tax_rate" inputmode="decimal" value="<?= $v('tax_rate', '0') ?>"><span class="addon">%</span></div>
-            <div class="hint">For state-accurate tax, connect a tax service (e.g. Stripe Tax) at checkout.</div></div>
+            <div class="hint">For state-accurate tax, connect a tax service at checkout.</div></div>
           <div class="field"><label for="low_stock_threshold">Low-stock alert at</label><div class="input-group"><input class="input" type="number" min="0" id="low_stock_threshold" name="low_stock_threshold" value="<?= $v('low_stock_threshold', '5') ?>"><span class="addon">units</span></div>
             <div class="hint">Shown as “Only X left” in the store.</div></div>
         </div>
@@ -144,23 +176,36 @@ require __DIR__ . '/includes/header.php';
       <form method="post" style="max-width:720px" autocomplete="off">
         <?= csrf_field() ?><input type="hidden" name="action" value="payments">
         <div class="alert alert-info"><i class="bi bi-shield-lock"></i><div>Secret keys are never shown again after saving. On a production server, prefer storing them as environment variables.</div></div>
-        <h3 style="font-size:15px;margin:8px 0 12px"><i class="bi bi-stripe"></i> Stripe</h3>
+        <h3 style="font-size:15px;margin:8px 0 12px"><i class="bi bi-stripe"></i> Stripe
+          <?php if (!stripe_enabled()): ?><span class="badge badge-neutral">Not configured</span>
+          <?php elseif (stripe_test_mode()): ?><span class="badge badge-warning">Test mode — no real charges</span>
+          <?php else: ?><span class="badge badge-success">Live — taking real payments</span><?php endif; ?></h3>
+        <p class="small text-2" style="margin:0 0 12px">Find your keys in the Stripe dashboard under Developers → API keys. Test keys come from the dashboard's test mode and start with <code>pk_test_</code> / <code>sk_test_</code>; live keys start with <code>pk_live_</code> / <code>sk_live_</code>. Keep using test mode until a full order has gone through end to end.</p>
         <div class="form-row">
-          <div class="field"><label for="stripe_mode">Mode</label><select id="stripe_mode" name="stripe_mode"><option value="test" <?= $sel('stripe_mode', 'test', 'test') ?>>Test</option><option value="live" <?= $sel('stripe_mode', 'live', 'test') ?>>Live</option></select></div>
-          <div class="field"><label for="stripe_publishable_key">Publishable key</label><input class="input" id="stripe_publishable_key" name="stripe_publishable_key" value="<?= $v('stripe_publishable_key') ?>" placeholder="pk_test_…"></div>
+          <div class="field"><label for="stripe_mode">Active mode</label><select id="stripe_mode" name="stripe_mode">
+            <option value="test" <?= $sel('stripe_mode', 'test', 'test') ?>>Test (use test cards, no real money)</option>
+            <option value="live" <?= $sel('stripe_mode', 'live', 'test') ?>>Live (real payments)</option></select></div>
+          <div class="field"><label>Webhook endpoint</label><input class="input" value="<?= e(absolute_url('stripe-webhook.php')) ?>" readonly onclick="this.select()">
+            <div class="hint">Add it in Stripe (in each mode) with the event <code>checkout.session.completed</code>.</div></div>
         </div>
-        <div class="form-row">
-          <div class="field"><label for="stripe_secret_key">Secret key</label><input class="input" type="password" id="stripe_secret_key" name="stripe_secret_key" placeholder="sk_test_…" autocomplete="new-password"><div class="hint"><?= $secretHint('stripe_secret_key') ?></div></div>
-          <div class="field"><label for="stripe_webhook_secret">Webhook signing secret</label><input class="input" type="password" id="stripe_webhook_secret" name="stripe_webhook_secret" placeholder="whsec_…" autocomplete="new-password"><div class="hint"><?= $secretHint('stripe_webhook_secret') ?></div></div>
-        </div>
-        <h3 style="font-size:15px;margin:16px 0 12px"><i class="bi bi-paypal"></i> PayPal</h3>
-        <div class="form-row three">
-          <div class="field"><label for="paypal_mode">Mode</label><select id="paypal_mode" name="paypal_mode"><option value="sandbox" <?= $sel('paypal_mode', 'sandbox', 'sandbox') ?>>Sandbox</option><option value="live" <?= $sel('paypal_mode', 'live', 'sandbox') ?>>Live</option></select></div>
-          <div class="field"><label for="paypal_client_id">Client ID</label><input class="input" id="paypal_client_id" name="paypal_client_id" value="<?= $v('paypal_client_id') ?>"></div>
-          <div class="field"><label for="paypal_secret">Secret</label><input class="input" type="password" id="paypal_secret" name="paypal_secret" autocomplete="new-password"><div class="hint"><?= $secretHint('paypal_secret') ?></div></div>
-        </div>
-        <div class="form-actions" style="justify-content:flex-start"><button class="btn btn-primary" type="submit">Save gateways</button></div>
+        <?php foreach (['test' => 'Test keys', 'live' => 'Live keys'] as $m => $label): ?>
+          <h4 style="font-size:14px;margin:18px 0 10px"><?= $label ?></h4>
+          <div class="form-row three">
+            <div class="field"><label for="stripe_<?= $m ?>_publishable_key">Publishable key</label><input class="input" id="stripe_<?= $m ?>_publishable_key" name="stripe_<?= $m ?>_publishable_key" value="<?= e($_POST["stripe_{$m}_publishable_key"] ?? stripe_key('publishable_key', $m)) ?>" placeholder="pk_<?= $m ?>_…"></div>
+            <div class="field"><label for="stripe_<?= $m ?>_secret_key">Secret key</label><input class="input" type="password" id="stripe_<?= $m ?>_secret_key" name="stripe_<?= $m ?>_secret_key" placeholder="sk_<?= $m ?>_…" autocomplete="new-password"><div class="hint"><?= $stripeHint($m, 'secret_key') ?></div></div>
+            <div class="field"><label for="stripe_<?= $m ?>_webhook_secret">Webhook signing secret</label><input class="input" type="password" id="stripe_<?= $m ?>_webhook_secret" name="stripe_<?= $m ?>_webhook_secret" placeholder="whsec_…" autocomplete="new-password"><div class="hint"><?= $stripeHint($m, 'webhook_secret') ?></div></div>
+          </div>
+          <button class="btn btn-sm" type="submit" form="stripeCheck<?= ucfirst($m) ?>"><i class="bi bi-plug"></i>Test <?= $m ?> connection</button>
+        <?php endforeach; ?>
+        <?php if (stripe_test_mode()): ?>
+          <div class="alert alert-warning mt"><i class="bi bi-credit-card"></i><div><strong>Test cards</strong> (any future expiry, any CVC, any ZIP):
+            <?php foreach (STRIPE_TEST_CARDS as $card => $result): ?><div><code><?= e($card) ?></code> — <?= e($result) ?></div><?php endforeach; ?></div></div>
+        <?php endif; ?>
+        <div class="form-actions mt" style="justify-content:flex-start"><button class="btn btn-primary" type="submit">Save gateways</button></div>
       </form>
+      <?php foreach (['test', 'live'] as $m): ?>
+        <form method="post" id="stripeCheck<?= ucfirst($m) ?>" hidden><?= csrf_field() ?><input type="hidden" name="action" value="stripe_check"><input type="hidden" name="mode" value="<?= $m ?>"></form>
+      <?php endforeach; ?>
 
     <?php elseif ($tab === 'team'):
       $team = fetch_all('SELECT id, name, email, role, status, last_login_at, created_at FROM admins ORDER BY FIELD(status, \'pending\') DESC, created_at'); ?>

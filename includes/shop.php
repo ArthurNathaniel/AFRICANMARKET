@@ -136,6 +136,76 @@ function cart_weight(array $lines): float
 }
 
 /* ---------------------------------------------------------------------------
+ * WhatsApp orders
+ * Clicking "Order via WhatsApp" records an unpaid order (so it shows in
+ * Admin → Orders with an order number) and then opens the chat with that number.
+ * ------------------------------------------------------------------------- */
+const WHATSAPP_ORDER_METHOD = 'WhatsApp order';
+
+function is_whatsapp_order(array $order): bool
+{
+    return $order['shipping_method'] === WHATSAPP_ORDER_METHOD;
+}
+
+/** Link that records a WhatsApp order for the cart (or one product) and opens the chat; '' if no number is set. */
+function whatsapp_order_link(int $productId = 0): string
+{
+    if (setting('whatsapp_number', '') === '') return '';
+    return url('whatsapp-order.php?t=' . csrf_token() . ($productId ? '&product=' . $productId : ''));
+}
+
+/**
+ * Creates the visitor's WhatsApp order for $lines, or updates the one they already
+ * started from the same source (cart / product) if it hasn't been paid or invoiced.
+ * $lines use the cart_lines() shape. Returns the order row.
+ */
+function save_whatsapp_order(array $lines, string $source): array
+{
+    $subtotal = cart_subtotal($lines);
+    $tax = round($subtotal * (float) setting('tax_rate', 0) / 100, 2);
+    $total = round($subtotal + $tax, 2);
+
+    // Reuse only while the admin hasn't priced it (shipping/discount) and the customer hasn't started paying.
+    $existing = fetch_one("SELECT * FROM orders WHERE id = ? AND payment_status = 'unpaid' AND status = 'pending' AND shipping_method = ?
+                             AND stripe_session_id IS NULL AND shipping_total = 0 AND discount_total = 0",
+                          [(int) ($_SESSION['wa_orders'][$source] ?? 0), WHATSAPP_ORDER_METHOD]);
+    if ($existing) {
+        $pdo = db();
+        $pdo->beginTransaction();
+        try {
+            q('UPDATE orders SET subtotal = ?, tax_total = ?, grand_total = ? WHERE id = ?', [$subtotal, $tax, $total, $existing['id']]);
+            q('DELETE FROM order_items WHERE order_id = ?', [$existing['id']]);
+            insert_order_items((int) $existing['id'], $lines);
+            $pdo->commit();
+        } catch (Throwable $ex) {
+            $pdo->rollBack();
+            throw $ex;
+        }
+        return fetch_one('SELECT * FROM orders WHERE id = ?', [$existing['id']]);
+    }
+
+    $c = current_customer();
+    $orderId = insert_order([
+        'customer_id' => $c['id'] ?? null, 'email' => $c['email'] ?? '',
+        'subtotal' => $subtotal, 'tax_total' => $tax, 'grand_total' => $total,
+        'shipping_method' => WHATSAPP_ORDER_METHOD,
+        'ship_name' => $c ? trim($c['first_name'] . ' ' . $c['last_name']) : null, 'ship_phone' => $c['phone'] ?? null,
+    ], $lines);
+    $_SESSION['wa_orders'][$source] = $orderId;
+    $_SESSION['my_orders'][] = $orderId;
+    return fetch_one('SELECT * FROM orders WHERE id = ?', [$orderId]);
+}
+
+function whatsapp_order_text(array $order, array $lines): string
+{
+    $text = "Hi! I'd like to place an order.\n\n*Order #{$order['order_number']}*\n";
+    foreach ($lines as $l) $text .= "• {$l['qty']} × {$l['name']} — " . money($l['line_total']) . "\n";
+    $text .= "\nItems: " . array_sum(array_column($lines, 'qty')) . "\nSubtotal: " . money($order['subtotal'])
+           . "\n\nPlease send me the invoice so I can pay online.";
+    return $text;
+}
+
+/* ---------------------------------------------------------------------------
  * Coupons
  * ------------------------------------------------------------------------- */
 /** Returns [coupon|null, error|null]. */
@@ -296,7 +366,7 @@ function send_order_emails(int $orderId): void
     $list = '';
     foreach ($items as $i) $list .= "- {$i['quantity']} × {$i['product_name']}  " . money($i['line_total']) . "\n";
 
-    send_mail($o['email'], "Order #{$o['order_number']} confirmed",
+    if ($o['email'] !== '') send_mail($o['email'], "Order #{$o['order_number']} confirmed",
         "Hi {$o['ship_name']},\n\nThank you for your order! Here's what you bought:\n\n$list\nTotal paid: " . money($o['grand_total'])
         . "\n\nWe'll email you tracking details as soon as it ships.\nTrack your order: " . absolute_url('order-tracking.php') . "\n\n$store");
 
@@ -304,6 +374,139 @@ function send_order_emails(int $orderId): void
     if ($staff = setting('support_email')) {
         send_mail($staff, "New order #{$o['order_number']} — " . money($o['grand_total']),
             "New paid order to ship to {$o['ship_city']}, {$o['ship_state']}:\n\n$list\n" . absolute_url('admin/orders.php?id=' . $orderId));
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * Invoices / payment links (sent to customers on WhatsApp)
+ * ------------------------------------------------------------------------- */
+/** Secret used to sign payment links; generated on first use. */
+function invoice_secret(): string
+{
+    static $secret = null;
+    $secret ??= (string) setting('invoice_secret', '');
+    if ($secret === '') {
+        $secret = bin2hex(random_bytes(32));
+        save_setting('invoice_secret', $secret);
+    }
+    return $secret;
+}
+
+function invoice_token(array $order): string
+{
+    return substr(hash_hmac('sha256', $order['id'] . '|' . $order['order_number'], invoice_secret()), 0, 32);
+}
+
+/** Public link where the customer can view the invoice and pay by card. */
+function invoice_url(array $order): string
+{
+    return absolute_url('pay.php?o=' . urlencode($order['order_number']) . '&k=' . invoice_token($order));
+}
+
+function invoice_whatsapp_text(array $order): string
+{
+    $items = fetch_all('SELECT product_name, quantity, line_total FROM order_items WHERE order_id = ? ORDER BY id', [$order['id']]);
+    $first = explode(' ', trim((string) $order['ship_name']))[0];
+    $text = 'Hi' . ($first !== '' ? " {$first}" : '') . "! Here's your invoice from " . setting('store_name', APP_NAME) . ".\n\n"
+          . "*Invoice #{$order['order_number']}*\n";
+    foreach ($items as $i) $text .= "• {$i['quantity']} × {$i['product_name']} — " . money($i['line_total']) . "\n";
+    $text .= "\nSubtotal: " . money($order['subtotal']);
+    if ($order['discount_total'] > 0) $text .= "\nDiscount: −" . money($order['discount_total']);
+    $text .= "\nShipping: " . ($order['shipping_total'] > 0 ? money($order['shipping_total']) : 'Free');
+    if ($order['tax_total'] > 0) $text .= "\nTax: " . money($order['tax_total']);
+    $text .= "\n*Total: " . money($order['grand_total']) . "*\n\n"
+           . "Pay securely online by card here:\n" . invoice_url($order) . "\n\nThank you for shopping with us!";
+    return $text;
+}
+
+/** wa.me link to the customer's number (or the contact picker if no phone is on file). */
+function invoice_whatsapp_url(array $order): string
+{
+    $digits = $order['ship_phone'] ? ltrim(phone_href($order['ship_phone']), '+') : '';
+    return 'https://wa.me/' . $digits . '?text=' . rawurlencode(invoice_whatsapp_text($order));
+}
+
+/**
+ * Creates an unpaid order from an admin-built invoice.
+ * $lines: [[product_id, qty], ...]. Returns [orderId|null, errors[]].
+ */
+function create_invoice_order(array $cust, array $lines, float $shipping, float $discount, string $notes): array
+{
+    $qty = [];
+    foreach ($lines as [$pid, $q]) if ($pid > 0 && $q > 0) $qty[$pid] = ($qty[$pid] ?? 0) + $q;
+    if (!$qty) return [null, ['Add at least one product to the invoice.']];
+
+    $in = implode(',', array_fill(0, count($qty), '?'));
+    $products = array_column(fetch_all("SELECT id, name, sku, price, cost_price FROM products WHERE id IN ($in)", array_keys($qty)), null, 'id');
+    $items = [];
+    foreach ($qty as $pid => $q) {
+        if (!isset($products[$pid])) return [null, ['One of the selected products no longer exists.']];
+        $p = $products[$pid];
+        $items[] = $p + ['qty' => $q, 'line_total' => round($p['price'] * $q, 2)];
+    }
+
+    $subtotal = round(array_sum(array_column($items, 'line_total')), 2);
+    $discount = round(min(max(0, $discount), $subtotal), 2);
+    $shipping = round(max(0, $shipping), 2);
+    $tax = round(($subtotal - $discount) * (float) setting('tax_rate', 0) / 100, 2);
+    $total = round($subtotal - $discount + $shipping + $tax, 2);
+    if ($total < 0.5) return [null, ['The invoice total must be at least $0.50 to pay by card.']];
+
+    $customerId = $cust['email'] !== '' ? fetch_value('SELECT id FROM customers WHERE email = ?', [$cust['email']]) : null;
+
+    $orderId = insert_order([
+        'customer_id' => $customerId ?: null, 'email' => $cust['email'],
+        'subtotal' => $subtotal, 'discount_total' => $discount, 'shipping_total' => $shipping, 'tax_total' => $tax, 'grand_total' => $total,
+        'shipping_method' => WHATSAPP_ORDER_METHOD,
+        'ship_name' => $cust['name'], 'ship_line1' => $cust['line1'] ?: null, 'ship_line2' => $cust['line2'] ?: null,
+        'ship_city' => $cust['city'] ?: null, 'ship_state' => $cust['state'] ?: null, 'ship_zip' => $cust['zip'] ?: null,
+        'ship_phone' => $cust['phone'] ?: null, 'admin_notes' => $notes ?: null,
+    ], $items);
+    return [$orderId, []];
+}
+
+/**
+ * Re-prices an unpaid invoice after the admin sets shipping/discount.
+ * Returns an error message, or null on success.
+ */
+function update_invoice_totals(array $order, float $shipping, float $discount): ?string
+{
+    $subtotal = (float) $order['subtotal'];
+    $discount = round(min(max(0, $discount), $subtotal), 2);
+    $shipping = round(max(0, $shipping), 2);
+    $tax = round(($subtotal - $discount) * (float) setting('tax_rate', 0) / 100, 2);
+    $total = round($subtotal - $discount + $shipping + $tax, 2);
+    if ($total < 0.5) return 'The invoice total must be at least $0.50 to pay by card.';
+    q('UPDATE orders SET discount_total = ?, shipping_total = ?, tax_total = ?, grand_total = ? WHERE id = ?',
+      [$discount, $shipping, $tax, $total, $order['id']]);
+    return null;
+}
+
+/** Inserts an unpaid, pending order plus its items; assigns the order number. Returns the new id. */
+function insert_order(array $fields, array $items): int
+{
+    $fields = ['order_number' => 'TMP-' . bin2hex(random_bytes(6)), 'status' => 'pending', 'payment_status' => 'unpaid'] + $fields;
+    $pdo = db();
+    $pdo->beginTransaction();
+    try {
+        q('INSERT INTO orders (' . implode(', ', array_keys($fields)) . ') VALUES (' . implode(',', array_fill(0, count($fields), '?')) . ')', array_values($fields));
+        $orderId = (int) $pdo->lastInsertId();
+        q('UPDATE orders SET order_number = ? WHERE id = ?', [setting('order_prefix', 'JAM') . '-' . (100000 + $orderId), $orderId]);
+        insert_order_items($orderId, $items);
+        $pdo->commit();
+    } catch (Throwable $ex) {
+        $pdo->rollBack();
+        throw $ex;
+    }
+    return $orderId;
+}
+
+/** $items use the cart_lines() shape: id, name, sku, price, cost_price, qty, line_total. */
+function insert_order_items(int $orderId, array $items): void
+{
+    foreach ($items as $l) {
+        q('INSERT INTO order_items (order_id, product_id, product_name, sku, unit_price, unit_cost, quantity, line_total) VALUES (?,?,?,?,?,?,?,?)',
+          [$orderId, $l['id'], $l['name'], $l['sku'], $l['price'], $l['cost_price'], $l['qty'], $l['line_total']]);
     }
 }
 
@@ -328,11 +531,45 @@ function tracking_link(?string $carrier, ?string $number): ?string
 }
 
 /* ---------------------------------------------------------------------------
- * Stripe (REST API over cURL — no SDK required)
+ * Stripe Checkout (REST API over cURL — no SDK required)
+ * Test and live modes each have their own keys; "stripe_mode" picks which set
+ * is used. In test mode no real money moves — pay with Stripe's test cards.
  * ------------------------------------------------------------------------- */
+const STRIPE_TEST_CARDS = [
+    '4242 4242 4242 4242' => 'Payment succeeds',
+    '4000 0025 0000 3155' => 'Requires 3D Secure authentication',
+    '4000 0000 0000 9995' => 'Declined (insufficient funds)',
+];
+
+function stripe_mode(): string
+{
+    return setting('stripe_mode', 'test') === 'live' ? 'live' : 'test';
+}
+
+function stripe_test_mode(): bool
+{
+    return stripe_mode() === 'test';
+}
+
+/**
+ * Reads a key for the given mode (default: current): publishable_key,
+ * secret_key or webhook_secret. Falls back to the older single-set setting
+ * (stripe_secret_key etc.) when its prefix belongs to that mode.
+ */
+function stripe_key(string $name, ?string $mode = null): string
+{
+    $mode = $mode ?? stripe_mode();
+    $value = (string) setting("stripe_{$mode}_{$name}", '');
+    if ($value === '' && $name !== 'webhook_secret') {
+        $legacy = (string) setting("stripe_{$name}", '');
+        if (preg_match('/^(pk|sk|rk)_' . $mode . '_/', $legacy)) $value = $legacy;
+    }
+    return $value;
+}
+
 function stripe_enabled(): bool
 {
-    return (string) setting('stripe_secret_key', '') !== '' && function_exists('curl_init');
+    return stripe_key('secret_key') !== '' && function_exists('curl_init');
 }
 
 function test_payments_enabled(): bool
@@ -340,12 +577,12 @@ function test_payments_enabled(): bool
     return APP_ENV === 'development' && !stripe_enabled();
 }
 
-function stripe_request(string $method, string $path, array $params = []): array
+function stripe_request(string $method, string $path, array $params = [], ?string $secretKey = null): array
 {
     $ch = curl_init('https://api.stripe.com/v1/' . ltrim($path, '/') . ($method === 'GET' && $params ? '?' . http_build_query($params) : ''));
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_USERPWD        => setting('stripe_secret_key') . ':',
+        CURLOPT_USERPWD        => ($secretKey ?? stripe_key('secret_key')) . ':',
         CURLOPT_CUSTOMREQUEST  => $method,
         CURLOPT_TIMEOUT        => 30,
     ]);
@@ -359,13 +596,24 @@ function stripe_request(string $method, string $path, array $params = []): array
     return $data;
 }
 
-function stripe_checkout_url(array $order): string
+/** Checks a mode's secret key against the Stripe API. Returns a short status message; throws on failure. */
+function stripe_check_connection(string $mode): string
+{
+    $key = stripe_key('secret_key', $mode);
+    if ($key === '') throw new RuntimeException('No ' . $mode . ' secret key saved yet.');
+    if (!function_exists('curl_init')) throw new RuntimeException('The PHP cURL extension is not enabled on this server.');
+    $acct = stripe_request('GET', 'account', [], $key);
+    $name = $acct['settings']['dashboard']['display_name'] ?? $acct['business_profile']['name'] ?? $acct['id'] ?? 'your account';
+    return 'Connected to ' . $name . ' in ' . $mode . ' mode.';
+}
+
+function stripe_checkout_url(array $order, ?string $cancelUrl = null): string
 {
     $items = fetch_all('SELECT product_name, quantity FROM order_items WHERE order_id = ?', [$order['id']]);
     $desc = implode(', ', array_map(fn($i) => $i['quantity'] . ' × ' . $i['product_name'], $items));
-    $session = stripe_request('POST', 'checkout/sessions', [
+    $session = stripe_request('POST', 'checkout/sessions', array_filter([
         'mode' => 'payment',
-        'customer_email' => $order['email'],
+        'customer_email' => $order['email'] ?: null,
         'client_reference_id' => $order['id'],
         'metadata' => ['order_id' => $order['id'], 'order_number' => $order['order_number']],
         'payment_intent_data' => ['metadata' => ['order_id' => $order['id'], 'order_number' => $order['order_number']]],
@@ -374,15 +622,15 @@ function stripe_checkout_url(array $order): string
             'price_data' => [
                 'currency' => 'usd',
                 'unit_amount' => (int) round($order['grand_total'] * 100),
-                'product_data' => [
+                'product_data' => array_filter([
                     'name' => setting('store_name', APP_NAME) . ' order #' . $order['order_number'],
-                    'description' => mb_substr($desc, 0, 450),
-                ],
+                    'description' => mb_substr($desc, 0, 450), // Stripe rejects an empty description
+                ]),
             ],
         ]],
         'success_url' => absolute_url('order-success.php?order=' . urlencode($order['order_number'])) . '&session_id={CHECKOUT_SESSION_ID}',
-        'cancel_url' => absolute_url('checkout.php?cancelled=1'),
-    ]);
+        'cancel_url' => $cancelUrl ?? absolute_url('checkout.php?cancelled=1'),
+    ], fn($v) => $v !== null));
     q('UPDATE orders SET stripe_session_id = ? WHERE id = ?', [$session['id'], $order['id']]);
     return $session['url'];
 }
@@ -390,7 +638,7 @@ function stripe_checkout_url(array $order): string
 /** Confirms a Checkout Session against the order and marks it paid. */
 function stripe_confirm_session(array $order, string $sessionId): bool
 {
-    if (!stripe_enabled() || $order['payment_status'] === 'paid' || $sessionId !== $order['stripe_session_id']) return false;
+    if (!stripe_enabled() || $order['payment_status'] === 'paid' || $sessionId !== (string) $order['stripe_session_id']) return false;
     $s = stripe_request('GET', 'checkout/sessions/' . rawurlencode($sessionId));
     $expected = (int) round($order['grand_total'] * 100);
     if (($s['payment_status'] ?? '') === 'paid' && (int) ($s['amount_total'] ?? 0) === $expected

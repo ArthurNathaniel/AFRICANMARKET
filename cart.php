@@ -6,17 +6,33 @@ if (is_post()) {
     $action = input('action');
     $pid = input_int('product_id');
 
-    if ($action === 'add') {
+    // add: increase by qty (default 1). set: exact quantity (0 removes) — used by the product-card stepper.
+    if ($action === 'add' || $action === 'set') {
+        $ajax = strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json') !== false;
         $p = fetch_one('SELECT p.id, p.name, p.stock_qty FROM products p WHERE p.id = ? AND ' . LIVE_PRODUCT_SQL, [$pid]);
         if (!$p || $p['stock_qty'] <= 0) {
-            flash('error', 'Sorry, that product is not available right now.');
+            $ok = false;
+            $qty = 0;
+            $msg = 'Sorry, that product is not available right now.';
         } else {
-            $want = (cart_raw()[$pid] ?? 0) + max(1, input_int('qty', 1));
-            $qty = min($want, (int) $p['stock_qty']);
+            $want = $action === 'add' ? (cart_raw()[$pid] ?? 0) + max(1, input_int('qty', 1)) : max(0, input_int('qty'));
+            $qty = min($want, (int) $p['stock_qty'], 99);
             cart_set($pid, $qty);
-            flash('success', $qty < $want ? "Only {$p['stock_qty']} of “{$p['name']}” available — added the maximum." : "Added “{$p['name']}” to your cart.");
+            $ok = true;
+            $msg = $qty < $want ? "Only {$qty} of “{$p['name']}” available — added the maximum."
+                 : ($action === 'add' ? "Added “{$p['name']}” to your cart." : ($qty ? "Updated “{$p['name']}” — {$qty} in your cart." : "Removed “{$p['name']}” from your cart."));
         }
+        if ($ajax) {
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => $ok, 'qty' => $qty, 'max' => $p ? min(99, (int) $p['stock_qty']) : 0, 'count' => cart_count(), 'message' => $msg]);
+            exit;
+        }
+        flash($ok ? 'success' : 'error', $msg);
         if (input('buy_now') === '1') redirect('checkout.php');
+        if ($back = safe_next(input('back'))) {
+            header('Location: ' . $back);
+            exit;
+        }
     } elseif ($action === 'update') {
         cart_set($pid, input_int('qty'));
     } elseif ($action === 'remove') {
@@ -117,6 +133,9 @@ require __DIR__ . '/partials/header.php';
         <?php endif; ?>
 
         <a class="btn btn-primary btn-lg btn-block" href="<?= url('checkout.php') ?>" style="margin-top:8px">Checkout <i class="bi bi-lock"></i></a>
+        <?php if ($wa = whatsapp_order_link()): ?>
+          <a class="btn btn-whatsapp btn-block" href="<?= e($wa) ?>" target="_blank" rel="noopener" style="margin-top:8px"><i class="bi bi-whatsapp"></i> Order via WhatsApp</a>
+        <?php endif; ?>
         <a class="btn btn-ghost btn-block" href="<?= url('shop.php') ?>" style="margin-top:8px">Continue shopping</a>
         <div class="trust">
           <div><i class="bi bi-shield-lock"></i> Secure checkout powered by Stripe</div>

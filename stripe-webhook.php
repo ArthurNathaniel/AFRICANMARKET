@@ -1,14 +1,14 @@
 <?php
 /**
- * Stripe webhook endpoint. In the Stripe dashboard, add an endpoint pointing at
+ * Stripe webhook endpoint. In the Stripe dashboard (test mode and/or live mode),
+ * add an endpoint pointing at
  *   https://YOUR-DOMAIN/stripe-webhook.php
  * listening for "checkout.session.completed", then paste its signing secret
- * into Admin → Settings → Payment gateways.
+ * into Admin → Settings → Payment gateways under the matching mode.
  */
 require_once __DIR__ . '/includes/shop.php';
 
 $payload = file_get_contents('php://input');
-$secret = (string) setting('stripe_webhook_secret', '');
 $header = $_SERVER['HTTP_STRIPE_SIGNATURE'] ?? '';
 
 // Verify the Stripe-Signature header: t=timestamp,v1=hex(hmac_sha256("t.payload"))
@@ -18,11 +18,17 @@ foreach (explode(',', $header) as $kv) {
     $parts[$k][] = $v;
 }
 $timestamp = (int) ($parts['t'][0] ?? 0);
-$expected = hash_hmac('sha256', $timestamp . '.' . $payload, $secret);
-$valid = $secret !== '' && abs(time() - $timestamp) < 300
-    && array_filter($parts['v1'] ?? [], fn($sig) => hash_equals($expected, $sig));
-
-if (!$valid) {
+$valid = false;
+foreach (['test', 'live'] as $mode) {
+    $secret = stripe_key('webhook_secret', $mode);
+    if ($secret === '') continue;
+    $expected = hash_hmac('sha256', $timestamp . '.' . $payload, $secret);
+    if (array_filter($parts['v1'] ?? [], fn($sig) => hash_equals($expected, $sig))) {
+        $valid = true;
+        break;
+    }
+}
+if (!$valid || abs(time() - $timestamp) >= 300) {
     http_response_code(400);
     exit('Invalid signature');
 }

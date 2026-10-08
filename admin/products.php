@@ -108,7 +108,7 @@ require __DIR__ . '/includes/header.php';
 
   <form class="filters" method="get">
     <?php if ($status !== ''): ?><input type="hidden" name="status" value="<?= e($status) ?>"><?php endif; ?>
-    <div class="search"><i class="bi bi-search"></i><input class="input" name="q" value="<?= e($search) ?>" placeholder="Search name or SKU…"></div>
+    <div class="search"><i class="bi bi-search"></i><input class="input" name="q" value="<?= e($search) ?>" placeholder="Search products…"></div>
     <select name="category" onchange="this.form.submit()">
       <option value="">All categories</option>
       <?php foreach ($categories as $c): ?><option value="<?= $c['id'] ?>" <?= $category == $c['id'] ? 'selected' : '' ?>><?= $c['parent'] ? e($c['parent']) . ' › ' : '' ?><?= e($c['name']) ?></option><?php endforeach; ?>
@@ -155,7 +155,7 @@ require __DIR__ . '/includes/header.php';
                 <div style="min-width:0">
                   <a class="title" href="<?= url('admin/product-edit.php?id=' . $p['id']) ?>"><?= e($p['name']) ?></a>
                   <?php if ($p['is_featured']): ?> <span class="badge badge-warning badge-plain"><i class="bi bi-star-fill"></i> Featured</span><?php endif; ?>
-                  <div class="meta">SKU <?= e($p['sku'] ?: '—') ?><?= $p['origin_country'] ? ' · ' . e($p['origin_country']) : '' ?></div>
+                  <div class="meta"><?= e($p['origin_country'] ?: '—') ?></div>
                 </div>
               </div>
             </td>

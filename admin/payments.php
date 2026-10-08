@@ -72,7 +72,7 @@ $crumb = 'Sales';
 require __DIR__ . '/includes/header.php';
 ?>
 <div class="page-head">
-  <div><p class="mt-0">Customer payments captured through Stripe, PayPal and manual transfers. Last 30 days shown in the summary.</p></div>
+  <div><p class="mt-0">Customer payments captured through Stripe and manual transfers. Last 30 days shown in the summary.</p></div>
   <?php if (admin_can('super_admin', 'admin')): ?><button class="btn btn-primary" data-modal="manualModal"><i class="bi bi-plus-lg"></i>Record manual payment</button><?php endif; ?>
 </div>
 
@@ -87,7 +87,7 @@ require __DIR__ . '/includes/header.php';
 <div class="card mt">
   <form class="filters" method="get">
     <div class="search"><i class="bi bi-search"></i><input class="input" name="q" value="<?= e($search) ?>" placeholder="Order #, transaction reference or email…"></div>
-    <select name="gateway" onchange="this.form.submit()"><option value="">All gateways</option><?php foreach (['stripe' => 'Stripe', 'paypal' => 'PayPal', 'manual' => 'Manual'] as $k => $l): ?><option value="<?= $k ?>" <?= $gateway === $k ? 'selected' : '' ?>><?= $l ?></option><?php endforeach; ?></select>
+    <select name="gateway" onchange="this.form.submit()"><option value="">All gateways</option><?php foreach (['stripe' => 'Stripe', 'manual' => 'Manual'] as $k => $l): ?><option value="<?= $k ?>" <?= $gateway === $k ? 'selected' : '' ?>><?= $l ?></option><?php endforeach; ?></select>
     <select name="status" onchange="this.form.submit()"><option value="">Any status</option><?php foreach (['completed', 'pending', 'failed', 'refunded'] as $s): ?><option value="<?= $s ?>" <?= $status === $s ? 'selected' : '' ?>><?= ucfirst($s) ?></option><?php endforeach; ?></select>
     <button class="btn" type="submit">Filter</button>
   </form>

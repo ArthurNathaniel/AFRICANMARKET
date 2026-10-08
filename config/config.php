@@ -1,11 +1,11 @@
 <?php
 /**
- * Jenmond African Market - core configuration.
+ * Jenmond Mobile African Market - core configuration.
  * Edit the values in this file for each environment (local XAMPP, staging, production).
  */
 
 // ---- Application -----------------------------------------------------------
-define('APP_NAME', 'Jenmond African Market');
+define('APP_NAME', 'Jenmond Mobile African Market');
 define('APP_TAGLINE', 'Shop Africa in the USA');
 define('APP_ENV', 'development');          // 'development' | 'production'
 

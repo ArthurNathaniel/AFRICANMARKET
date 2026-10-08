@@ -4,8 +4,8 @@
   <div class="wrap">
     <div class="footer-grid">
       <div>
-        <img src="<?= asset('img/logo-light.svg') ?>" alt="<?= e($storeName) ?>" style="height:44px;margin-bottom:14px">
-        <p style="max-width:320px;margin:0">Authentic African products, sourced from makers across the continent and shipped to your door anywhere in the USA.</p>
+        <div style="margin-bottom:14px"><?= brand_lockup('light', 'brand-lg') ?></div>
+        <p style="max-width:320px;margin:0">Authentic African groceries and everyday favourites, shipped free to your door anywhere in the USA.</p>
       </div>
       <div>
         <h4>Shop</h4>
@@ -29,7 +29,7 @@
         <ul>
           <li><a href="<?= url('order-tracking.php') ?>">Order tracking</a></li>
           <?php if (setting('support_email')): ?><li><a href="mailto:<?= e(setting('support_email')) ?>"><?= e(setting('support_email')) ?></a></li><?php endif; ?>
-          <?php if (setting('support_phone')): ?><li><?= e(setting('support_phone')) ?></li><?php endif; ?>
+          <?php foreach (support_phones() as $ph): ?><li><a href="tel:<?= e(phone_href($ph)) ?>"><i class="bi bi-telephone"></i> <?= e($ph) ?></a></li><?php endforeach; ?>
         </ul>
       </div>
     </div>
@@ -39,6 +39,9 @@
     </div>
   </div>
 </footer>
+<?php if ($wa = whatsapp_order_link()): ?>
+  <a class="wa-float" href="<?= e($wa) ?>" target="_blank" rel="noopener" aria-label="Order via WhatsApp"><i class="bi bi-whatsapp"></i></a>
+<?php endif; ?>
 <script src="<?= asset('js/store.js') ?>"></script>
 <?php if (!empty($pageScripts)) echo $pageScripts; ?>
 </body>

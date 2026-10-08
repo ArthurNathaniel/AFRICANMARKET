@@ -1,4 +1,4 @@
-# Jenmond African Market
+# Jenmond Mobile African Market
 
 An online store, built with PHP and MySQL, that sells authentic African products to customers across the USA. One shop, run by your admin team.
 
@@ -15,7 +15,9 @@ Demo customers can sign in with their email (see Admin → Customers) and the pa
 
 ## Payments
 
-- **Stripe:** add your keys in **Admin → Settings → Payment gateways**. Checkout then redirects to Stripe's secure payment page. In the Stripe dashboard, also add a webhook endpoint for `https://YOUR-DOMAIN/stripe-webhook.php` with the event `checkout.session.completed`, and paste its signing secret into Settings.
+- **Stripe (the only payment gateway):** in **Admin → Settings → Payment gateways**, paste your keys from the Stripe dashboard (**Developers → API keys**). There are separate fields for **test** keys (`pk_test_…` / `sk_test_…`) and **live** keys (`pk_live_…` / `sk_live_…`); the **Active mode** dropdown picks which set checkout uses. Use **Test connection** to check a key. Checkout redirects to Stripe's secure payment page and the payment is confirmed when the customer returns to `order-success.php`.
+- **Test mode:** no real money moves. Checkout shows test cards to use on the Stripe page, e.g. `4242 4242 4242 4242` (succeeds), `4000 0025 0000 3155` (3D Secure) and `4000 0000 0000 9995` (declined), with any future expiry, any CVC and any ZIP. Test payments appear in the Stripe dashboard with **Test mode** switched on.
+- **Webhook (recommended):** in Stripe, add an endpoint for `https://YOUR-DOMAIN/stripe-webhook.php` with the event `checkout.session.completed` (once in test mode, once in live mode) and paste each signing secret (`whsec_…`) into the matching Settings field. It marks orders paid even if the customer closes the tab before returning. Locally you can use `stripe listen --forward-to localhost/AFRICANMARKET/stripe-webhook.php`.
 - **Without Stripe keys:** in development mode only, checkout simulates a successful payment so you can test the full flow. In production, checkout is disabled until Stripe is configured.
 
 ## Before going live

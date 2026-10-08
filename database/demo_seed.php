@@ -162,10 +162,9 @@ function seed_demo_data(int $adminId): void
               [$oid, $p['id'], $p['name'], $p['sku'], $p['price'], $p['cost'], $qty, $line]);
         }
         if ($payment !== 'unpaid') {
-            $gw = mt_rand(1, 5) === 1 ? 'paypal' : 'stripe';
-            $ref = $gw === 'stripe' ? 'pi_' . bin2hex(random_bytes(10)) : 'PAYID-' . strtoupper(bin2hex(random_bytes(8)));
+            $ref = 'pi_' . bin2hex(random_bytes(10));
             $pstatus = ['paid' => 'completed', 'refunded' => 'refunded', 'failed' => 'failed'][$payment];
-            q('INSERT INTO payments (order_id, gateway, transaction_ref, amount, status, created_at) VALUES (?,?,?,?,?,?)', [$oid, $gw, $ref, $total, $pstatus, $created]);
+            q('INSERT INTO payments (order_id, gateway, transaction_ref, amount, status, created_at) VALUES (?,?,?,?,?,?)', [$oid, 'stripe', $ref, $total, $pstatus, $created]);
         }
     }
 
