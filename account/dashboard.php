@@ -17,7 +17,7 @@ require dirname(__DIR__) . '/partials/header.php';
 ?>
 <div class="wrap account-layout">
   <?php require dirname(__DIR__) . '/partials/account-nav.php'; ?>
-  <div style="display:grid;gap:24px">
+  <div class="stack">
     <div><h1 style="font-size:30px">Hello, <?= e($customer['first_name']) ?></h1><p class="text-2" style="margin:4px 0 0">Here's what's happening with your orders.</p></div>
     <div class="stat-cards">
       <div class="stat-card"><span>Orders placed</span><strong><?= (int) $stats['orders'] ?></strong></div>
@@ -27,24 +27,24 @@ require dirname(__DIR__) . '/partials/header.php';
     <div class="panel">
       <div class="panel-head"><h2>Recent orders</h2><a class="small" href="<?= url('account/orders.php') ?>">View all</a></div>
       <?php if ($recent): ?>
-        <div class="table-wrap"><table class="table">
-          <thead><tr><th>Order</th><th>Date</th><th>Status</th><th style="text-align:right">Total</th></tr></thead>
-          <tbody>
+        <div class="order-rows">
           <?php foreach ($recent as $o): ?>
-            <tr>
-              <td><a class="strong" href="<?= url('account/orders.php?id=' . $o['id']) ?>">#<?= e($o['order_number']) ?></a><div class="small muted"><?= (int) $o['items'] ?> item(s)</div></td>
-              <td><?= format_date($o['created_at']) ?></td>
-              <td><?= status_badge($o['payment_status'] === 'paid' || in_array($o['status'], ['cancelled', 'refunded'], true) ? $o['status'] : 'unpaid') ?></td>
-              <td style="text-align:right" class="strong"><?= money($o['grand_total']) ?></td>
-            </tr>
+            <a class="order-row" href="<?= url('account/orders.php?id=' . $o['id']) ?>">
+              <div class="grow">
+                <strong>#<?= e($o['order_number']) ?></strong>
+                <span class="small muted"><?= format_date($o['created_at']) ?> · <?= (int) $o['items'] ?> item<?= (int) $o['items'] === 1 ? '' : 's' ?><?= is_pickup_order($o) ? ' · Pickup' : '' ?></span>
+              </div>
+              <?= status_badge($o['payment_status'] === 'paid' || in_array($o['status'], ['cancelled', 'refunded'], true) ? $o['status'] : 'unpaid') ?>
+              <strong class="amt"><?= money($o['grand_total']) ?></strong>
+              <i class="bi bi-chevron-right muted"></i>
+            </a>
           <?php endforeach; ?>
-          </tbody>
-        </table></div>
+        </div>
       <?php else: ?>
         <div class="panel-body text-2">No orders yet. <a href="<?= url('shop.php') ?>">Start shopping</a></div>
       <?php endif; ?>
     </div>
-    <div class="cart-layout" style="padding:0;grid-template-columns:minmax(0,1fr) 300px">
+    <div class="account-split">
       <div class="panel">
         <div class="panel-head"><h2>From your wishlist</h2><a class="small" href="<?= url('account/wishlist.php') ?>">View all</a></div>
         <div class="panel-body">

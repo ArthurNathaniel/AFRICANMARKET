@@ -14,7 +14,7 @@ if ($id) {
     require dirname(__DIR__) . '/partials/header.php'; ?>
     <div class="wrap account-layout">
       <?php require dirname(__DIR__) . '/partials/account-nav.php'; ?>
-      <div style="display:grid;gap:20px">
+      <div class="stack">
         <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-end">
           <div><a class="small" href="<?= url('account/orders.php') ?>"><i class="bi bi-arrow-left"></i> All orders</a>
             <h1 style="font-size:28px;margin-top:6px">Order #<?= e($o['order_number']) ?></h1>
@@ -25,13 +25,13 @@ if ($id) {
           <div class="alert alert-warning"><i class="bi bi-exclamation-triangle"></i><div>This order hasn't been paid, so it won't ship. If you meant to buy these items, add them to your cart again and check out.</div></div>
         <?php endif; ?>
         <div class="panel panel-body"><?php render_order_progress($o); ?></div>
-        <div class="cart-layout" style="padding:0;grid-template-columns:minmax(0,1fr) 300px">
+        <div class="account-split">
           <div class="panel panel-body"><h2 style="font-size:18px">Items</h2><?php render_shipments($id); ?></div>
-          <div style="display:grid;gap:16px;align-content:start">
+          <div class="stack stack-sm">
             <div class="panel panel-body"><?php render_order_totals($o); ?>
               <?php if ($payment): ?><p class="small muted" style="margin:10px 0 0">Paid <?= format_date($payment['created_at']) ?> via <?= e($payment['gateway'] === 'manual' ? 'test payment' : ucfirst($payment['gateway'])) ?></p><?php endif; ?></div>
-            <div class="panel panel-body small"><strong>Shipping to</strong><div class="text-2" style="margin-top:4px"><?= e($o['ship_name']) ?><br><?= e($o['ship_line1']) ?><br><?php if ($o['ship_line2']): ?><?= e($o['ship_line2']) ?><br><?php endif; ?><?= e($o['ship_city']) ?>, <?= e($o['ship_state']) ?> <?= e($o['ship_zip']) ?></div></div>
-            <div class="panel panel-body small"><strong>Need help?</strong><p class="text-2" style="margin:4px 0 0">Email <a href="mailto:<?= e(setting('support_email', MAIL_FROM)) ?>"><?= e(setting('support_email', MAIL_FROM)) ?></a> with your order number.</p></div>
+            <div class="panel panel-body small"><?php render_delivery_box($o); ?></div>
+            <div class="panel panel-body small"><strong>Need help?</strong><p class="text-2" style="margin:4px 0 0"><?php $help = support_emails()[0] ?? MAIL_FROM; ?>Email <a href="mailto:<?= e($help) ?>"><?= e($help) ?></a> with your order number.</p></div>
           </div>
         </div>
       </div>

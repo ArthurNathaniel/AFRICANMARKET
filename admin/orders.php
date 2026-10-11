@@ -43,15 +43,18 @@ if (is_post()) {
     }
     $carrier = input('carrier') ?: null;
     $tracking = input('tracking_number') ?: null;
-    if ($status === 'shipped' && !$tracking) {
+    if ($status === 'shipped' && !$tracking && !is_pickup_order($order)) {
         flash('warning', 'Tip: add a tracking number so the customer can follow their package.');
     }
 
     db()->beginTransaction();
+    // Shipped/delivered flags are worked out here, not compared in SQL (avoids collation mismatches on some hosts).
+    $isShipped = (int) in_array($status, ['shipped', 'delivered'], true);
+    $isDelivered = (int) ($status === 'delivered');
     q('UPDATE orders SET status = ?, payment_status = ?, carrier = ?, tracking_number = ?, admin_notes = ?,
-         shipped_at = CASE WHEN ? IN (\'shipped\',\'delivered\') AND shipped_at IS NULL THEN NOW() ELSE shipped_at END,
-         delivered_at = CASE WHEN ? = \'delivered\' AND delivered_at IS NULL THEN NOW() ELSE delivered_at END
-       WHERE id = ?', [$status, $payment, $carrier, $tracking, input('admin_notes') ?: null, $status, $status, $id]);
+         shipped_at = CASE WHEN ? = 1 AND shipped_at IS NULL THEN NOW() ELSE shipped_at END,
+         delivered_at = CASE WHEN ? = 1 AND delivered_at IS NULL THEN NOW() ELSE delivered_at END
+       WHERE id = ?', [$status, $payment, $carrier, $tracking, input('admin_notes') ?: null, $isShipped, $isDelivered, $id]);
     // Put stock back when an order is cancelled/refunded for the first time (only if stock was taken, i.e. it was paid).
     $wasOpen = !in_array($order['status'], ['cancelled', 'refunded'], true);
     if ($wasOpen && $order['payment_status'] === 'paid' && in_array($status, ['cancelled', 'refunded'], true) && isset($_POST['restock'])) {
@@ -74,13 +77,18 @@ if (is_post()) {
             'cancelled'  => 'Your order has been cancelled.',
             'refunded'   => 'Your order has been refunded. The money should appear in 5–10 business days.',
         ];
+        if (is_pickup_order($order)) {
+            $messages['shipped'] = "Good news — your order is READY FOR PICKUP!\n\n" . pickup_instructions($order['order_number']);
+            $messages['delivered'] = 'Your order has been picked up. Thank you, we hope you love it!';
+        }
+        $subjects = is_pickup_order($order) ? ['shipped' => 'Ready for pickup', 'delivered' => 'Picked up'] : [];
         $body = "Hi {$order['ship_name']},\n\n" . ($messages[$status] ?? "Your order status is now: $status.") . "\n\nOrder #{$order['order_number']}\n";
         if ($tracking) {
             $body .= "Carrier: " . ($carrier ?: '—') . "\nTracking number: $tracking\n";
             if ($link = tracking_link($carrier, $tracking)) $body .= "Track it: $link\n";
         }
         $body .= "\nOrder details: " . absolute_url('order-tracking.php?order=' . urlencode($order['order_number']) . '&email=' . urlencode($order['email'])) . "\n\nThank you for shopping with us!\n$store";
-        send_mail($order['email'], "Order #{$order['order_number']}: " . ucfirst($status), $body);
+        send_mail($order['email'], "Order #{$order['order_number']}: " . ($subjects[$status] ?? ucfirst($status)), $body);
     }
     flash('success', 'Order updated' . (isset($_POST['notify']) && $changes ? ' and customer notified.' : '.'));
     redirect("admin/orders.php?id=$id");
@@ -198,10 +206,15 @@ if ($id) {
             <?php endif; ?>
             <div class="form-row">
               <div class="field"><label for="status">Order status</label>
-                <select id="status" name="status"><?php foreach ($orderStatuses as $s): ?><option value="<?= $s ?>" <?= $o['status'] === $s ? 'selected' : '' ?>><?= ucfirst($s) ?></option><?php endforeach; ?></select></div>
+                <?php $statusLabel = is_pickup_order($o) ? ['shipped' => 'Ready for pickup', 'delivered' => 'Picked up'] : []; ?>
+                <select id="status" name="status"><?php foreach ($orderStatuses as $s): ?><option value="<?= $s ?>" <?= $o['status'] === $s ? 'selected' : '' ?>><?= $statusLabel[$s] ?? ucfirst($s) ?></option><?php endforeach; ?></select></div>
               <div class="field"><label for="payment_status">Payment</label>
                 <select id="payment_status" name="payment_status"><?php foreach ($paymentStatuses as $s): ?><option value="<?= $s ?>" <?= $o['payment_status'] === $s ? 'selected' : '' ?>><?= ucfirst($s) ?></option><?php endforeach; ?></select></div>
             </div>
+            <?php if (is_pickup_order($o)): ?>
+              <div class="alert alert-info small"><i class="bi bi-shop"></i><div><strong>Pickup order.</strong> When it's packed, set <strong>Ready for pickup</strong> (the customer is emailed) and text <?= e($o['ship_phone'] ?: 'them') ?>. Hand it over to the customer or their Uber/driver against order <strong>#<?= e($o['order_number']) ?></strong>, then set <strong>Picked up</strong>.</div></div>
+              <input type="hidden" name="carrier" value="<?= e($o['carrier']) ?>"><input type="hidden" name="tracking_number" value="<?= e($o['tracking_number']) ?>">
+            <?php else: ?>
             <div class="form-row">
               <div class="field"><label for="carrier">Carrier</label>
                 <input class="input" id="carrier" name="carrier" list="carriers" value="<?= e($o['carrier']) ?>" placeholder="e.g. USPS">
@@ -209,6 +222,7 @@ if ($id) {
               <div class="field"><label for="tracking_number">Tracking number</label><input class="input" id="tracking_number" name="tracking_number" value="<?= e($o['tracking_number']) ?>"></div>
             </div>
             <?php if ($link = tracking_link($o['carrier'], $o['tracking_number'])): ?><p class="small" style="margin:-6px 0 12px"><a href="<?= e($link) ?>" target="_blank" rel="noopener">Open carrier tracking <i class="bi bi-box-arrow-up-right"></i></a></p><?php endif; ?>
+            <?php endif; ?>
             <div class="field"><label for="admin_notes">Internal notes</label><textarea class="input" id="admin_notes" name="admin_notes" rows="3" placeholder="Only visible to admins"><?= e($o['admin_notes']) ?></textarea></div>
             <label class="check mb"><input type="checkbox" name="notify" value="1" checked> Email the customer about status or tracking changes</label>
             <?php if (!in_array($o['status'], ['cancelled', 'refunded'], true) && $o['payment_status'] === 'paid'): ?>
@@ -224,7 +238,7 @@ if ($id) {
             <dt>Name</dt><dd><?php if ($o['customer_id']): ?><a href="<?= url('admin/customers.php?view=' . $o['customer_id']) ?>"><?= e($o['first_name'] . ' ' . $o['last_name']) ?></a> <span class="small muted"><?= $previousOrders ? "· $previousOrders previous order(s)" : '· first order' ?></span><?php else: ?><?= e($o['ship_name']) ?> <span class="muted">(guest)</span><?php endif; ?></dd>
             <dt>Email</dt><dd><?php if ($o['email'] !== ''): ?><a href="mailto:<?= e($o['email']) ?>"><?= e($o['email']) ?></a><?php else: ?>—<?php endif; ?></dd>
             <dt>Phone</dt><dd><?= e($o['ship_phone'] ?: '—') ?></dd>
-            <dt>Ship to</dt><dd><?php if ($o['ship_line1']): ?><?= e($o['ship_name']) ?><br><?= e($o['ship_line1']) ?><br><?php if ($o['ship_line2']): ?><?= e($o['ship_line2']) ?><br><?php endif; ?><?= e($o['ship_city']) ?>, <?= e($o['ship_state']) ?> <?= e($o['ship_zip']) ?><br>United States<?php else: ?><span class="muted">Not provided yet — the customer adds it when paying.</span><?php endif; ?></dd>
+            <dt><?= is_pickup_order($o) ? 'Delivery' : 'Ship to' ?></dt><dd><?php if (is_pickup_order($o)): ?><span class="badge badge-warning"><i class="bi bi-shop"></i> Pickup</span><br><span class="small">Customer comes in or sends an Uber/driver with order #<?= e($o['order_number']) ?></span><?php elseif ($o['ship_line1']): ?><?= e($o['ship_name']) ?><br><?= e($o['ship_line1']) ?><br><?php if ($o['ship_line2']): ?><?= e($o['ship_line2']) ?><br><?php endif; ?><?= e($o['ship_city']) ?>, <?= e($o['ship_state']) ?> <?= e($o['ship_zip']) ?><br>United States<?php else: ?><span class="muted">Not provided yet — the customer adds it when paying.</span><?php endif; ?></dd>
           </dl></div>
         </div>
       </div>
@@ -305,7 +319,7 @@ require __DIR__ . '/includes/header.php';
       <tbody>
       <?php foreach ($orders as $o): ?>
         <tr>
-          <td><a class="strong" href="?id=<?= $o['id'] ?>">#<?= e($o['order_number']) ?></a><?php if (is_whatsapp_order($o)): ?> <span class="badge badge-success" title="WhatsApp order"><i class="bi bi-whatsapp"></i> WhatsApp</span><?php endif; ?><div class="small muted"><?= format_date($o['created_at'], 'M j, g:i A') ?></div></td>
+          <td><a class="strong" href="?id=<?= $o['id'] ?>">#<?= e($o['order_number']) ?></a><?php if (is_whatsapp_order($o)): ?> <span class="badge badge-success" title="WhatsApp order"><i class="bi bi-whatsapp"></i> WhatsApp</span><?php endif; ?><?php if (is_pickup_order($o)): ?> <span class="badge badge-warning" title="Pickup order"><i class="bi bi-shop"></i> Pickup</span><?php endif; ?><div class="small muted"><?= format_date($o['created_at'], 'M j, g:i A') ?></div></td>
           <td><?= $o['ship_name'] ? e($o['ship_name']) : '<span class="muted">Name not added yet</span>' ?><div class="small muted"><?= $o['ship_city'] ? e($o['ship_city']) . ', ' . e($o['ship_state']) : e($o['ship_phone'] ?? '') ?></div></td>
           <td class="small text-2" style="max-width:260px"><?= (int) $o['items'] ?> × <?= e(mb_strimwidth((string) $o['products'], 0, 70, '…')) ?></td>
           <td><?= status_badge($o['status']) ?><?php if ($o['tracking_number']): ?><div class="small muted"><i class="bi bi-truck"></i> <?= e($o['carrier']) ?></div><?php endif; ?></td>

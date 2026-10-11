@@ -33,7 +33,7 @@ if ($order['payment_status'] === 'paid') {
 
 $closed = in_array($order['status'], ['cancelled', 'refunded'], true) || $order['payment_status'] === 'refunded';
 $needsEmail = $order['email'] === '';
-$needsAddress = !$order['ship_line1'] || !$order['ship_city'] || !$order['ship_state'] || !$order['ship_zip'];
+$needsAddress = !is_pickup_order($order) && (!$order['ship_line1'] || !$order['ship_city'] || !$order['ship_state'] || !$order['ship_zip']);
 $canPay = !$closed && (stripe_enabled() || test_payments_enabled());
 $states = us_states();
 $errors = [];
@@ -132,8 +132,7 @@ require __DIR__ . '/partials/header.php';
           </section>
         <?php else: ?>
           <section class="panel panel-body small">
-            <strong>Shipping to</strong>
-            <div class="text-2" style="margin-top:4px"><?= e($order['ship_name']) ?><br><?= e($order['ship_line1']) ?><br><?php if ($order['ship_line2']): ?><?= e($order['ship_line2']) ?><br><?php endif; ?><?= e($order['ship_city']) ?>, <?= e($order['ship_state']) ?> <?= e($order['ship_zip']) ?></div>
+            <?php render_delivery_box($order); ?>
           </section>
         <?php endif; ?>
 

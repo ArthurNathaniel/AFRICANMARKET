@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d4a32">
+  <title>You're offline · Jenmond Mobile African Market</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box;
+      font-family: "DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif; background: #fbf8f2; color: #1d1b16; text-align: center; }
+    .card { max-width: 380px; }
+    img { width: 120px; height: 120px; margin: 0 auto 18px; display: block; }
+    h1 { font-size: 26px; margin: 0 0 8px; color: #072e21; }
+    p { color: #57534a; line-height: 1.55; margin: 0 0 22px; }
+    button { font: inherit; font-weight: 700; padding: 13px 26px; border-radius: 12px; border: 0; background: #16794f; color: #fff; cursor: pointer; }
+    .kente { position: fixed; left: 0; right: 0; top: 0; height: 6px;
+      background: repeating-linear-gradient(90deg, #e2a022 0 18px, #c4532d 18px 26px, #16794f 26px 40px, #1d1b16 40px 44px); }
+  </style>
+</head>
+<body>
+  <div class="kente"></div>
+  <div class="card">
+    <img src="/assets/img/logo-badge-200.png" alt="Jenmond Mobile African Market" onerror="this.style.display='none'">
+    <h1>You're offline</h1>
+    <p>Check your internet connection, then try again. Your cart is saved and will be right where you left it.</p>
+    <button type="button" onclick="location.reload()">Try again</button>
+  </div>
+</body>
+</html>

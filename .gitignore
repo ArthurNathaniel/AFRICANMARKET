@@ -1,0 +1,2 @@
+# Data exports contain customer emails, addresses and password hashes
+database/data_*.sql

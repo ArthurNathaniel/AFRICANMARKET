@@ -3,9 +3,23 @@
  * Shared order progress, items and totals, used by order-success,
  * order-tracking and the account order page.
  */
+/** "Shipping to" address, or pickup location + instructions for pickup orders. */
+function render_delivery_box(array $order): void
+{
+    if (is_pickup_order($order)) { ?>
+        <strong><i class="bi bi-shop"></i> Pickup</strong>
+        <div class="text-2" style="margin-top:4px"><?= pickup_address() !== '' ? nl2br(e(pickup_address())) : 'We\'ll message you the pickup address when your order is ready.' ?></div>
+        <?php if (setting('pickup_hours')): ?><div class="text-2" style="margin-top:4px"><i class="bi bi-clock"></i> <?= e(setting('pickup_hours')) ?></div><?php endif; ?>
+        <div style="margin-top:8px">Come in, or send an Uber / driver with order number <strong>#<?= e($order['order_number']) ?></strong>. We'll text <?= e($order['ship_phone'] ?: 'you') ?> when it's ready.</div>
+    <?php } else { ?>
+        <strong>Shipping to</strong>
+        <div class="text-2" style="margin-top:4px"><?= e($order['ship_name']) ?><br><?= e($order['ship_line1']) ?><br><?php if ($order['ship_line2']): ?><?= e($order['ship_line2']) ?><br><?php endif; ?><?= e($order['ship_city']) ?>, <?= e($order['ship_state']) ?> <?= e($order['ship_zip']) ?></div>
+    <?php }
+}
+
 function render_order_progress(array $order): void
 {
-    $steps = ['Placed', 'Processing', 'Shipped', 'Delivered'];
+    $steps = is_pickup_order($order) ? ['Placed', 'Preparing', 'Ready for pickup', 'Picked up'] : ['Placed', 'Processing', 'Shipped', 'Delivered'];
     $idx = ['pending' => 0, 'processing' => 1, 'shipped' => 2, 'delivered' => 3][$order['status']] ?? null;
     if ($idx === null) {
         echo '<div class="alert alert-' . ($order['status'] === 'refunded' ? 'info' : 'error') . '"><i class="bi bi-info-circle"></i><div>This order was <strong>' . e($order['status']) . '</strong>.</div></div>';

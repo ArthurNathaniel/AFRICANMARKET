@@ -51,6 +51,21 @@ $origins = fetch_all("SELECT p.origin_country c, COUNT(*) n FROM products p
 
 $heading = $category ? $category['name'] : ($q !== '' ? "Results for “{$q}”" : 'All products');
 $pageTitle = $category ? $category['name'] : 'Shop';
+// ---- SEO: category pages are indexable; searches and filtered views are not ----
+$storeName = setting('store_name', APP_NAME);
+$metaTitle = ($category ? $category['name'] . ' – African Groceries Online' : 'Shop African Groceries Online') . ' | ' . $storeName;
+$metaDescription = $category
+    ? (plain_text($category['description'] ?? '') ?: 'Shop ' . $category['name'] . ' from Africa at ' . $storeName . '. Authentic brands you grew up with, delivered anywhere in the USA.')
+    : 'Shop authentic African groceries online — drinks, snacks, spices, sauces and more from Ghana, Nigeria and across Africa, delivered anywhere in the USA.';
+$canonical = absolute_url($category ? 'shop.php?category=' . urlencode($category['slug']) : 'shop.php');
+$filtered = $q !== '' || $origin || $min !== null || $max !== null || $sale || $inStock || $pg['page'] > 1 || $sort !== 'featured';
+if ($filtered) $metaRobots = 'noindex, follow';
+$schema = [[
+    '@type' => 'CollectionPage', 'name' => $category['name'] ?? 'Shop', 'url' => $canonical,
+    'mainEntity' => ['@type' => 'ItemList', 'itemListElement' => array_map(fn($pr, $i) => [
+        '@type' => 'ListItem', 'position' => $i + 1, 'url' => absolute_url('product.php?slug=' . urlencode($pr['slug'])), 'name' => $pr['name'],
+    ], $products, array_keys($products))],
+]];
 $activeCat = $category ? ($category['parent_id'] ? (string) fetch_value('SELECT slug FROM categories WHERE id = ?', [$category['parent_id']]) : $category['slug']) : 'all';
 $activeChips = array_filter([
     'q' => $q !== '' ? "“{$q}”" : null, 'origin' => $origin ?: null,

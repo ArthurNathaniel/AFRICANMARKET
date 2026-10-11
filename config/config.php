@@ -7,7 +7,7 @@
 // ---- Application -----------------------------------------------------------
 define('APP_NAME', 'Jenmond Mobile African Market');
 define('APP_TAGLINE', 'Shop Africa in the USA');
-define('APP_ENV', 'development');          // 'development' | 'production'
+define('APP_ENV', preg_match('/^(localhost|127\.|10\.|192\.168\.|\[::1\])/i', $_SERVER['HTTP_HOST'] ?? 'localhost') ? 'development' : 'production'); // auto: production on the live domain
 
 // ---- Database (XAMPP defaults) ---------------------------------------------
 define('DB_HOST', '127.0.0.1');
@@ -16,16 +16,13 @@ define('DB_NAME', 'african_market');
 define('DB_USER', 'root');
 define('DB_PASS', '');
 
-// define('DB_HOST', '127.0.0.1');
-// define('DB_PORT', 3306);
-// define('DB_NAME', 'u257031014_jen');
-// define('DB_USER', 'u257031014_jen');
-// define('DB_PASS', 'OnGod@@123');
+// Live (Hostinger) database credentials are set only in the server's copy of this file.
 
 // ---- URLs ------------------------------------------------------------------
 // Leave empty to auto-detect from the web server's document root,
 // or set explicitly in production, e.g. 'https://www.jenmondafricanmarket.com'
-define('BASE_URL', '');
+// Live domain everywhere except local development (localhost / LAN), which auto-detects.
+define('BASE_URL', preg_match('/^(localhost|127\.|10\.|192\.168\.|\[::1\])/i', $_SERVER['HTTP_HOST'] ?? '') ? '' : 'https://www.jenmondafricanmarket.com');
 
 // ---- Security --------------------------------------------------------------
 // Code a new admin must enter on the sign-up page. Accounts created with it

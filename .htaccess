@@ -1,1 +1,21 @@
 Options -Indexes
+
+# Send every visit to https://www.jenmondafricanmarket.com (one canonical address for customers and Google).
+# Only touches the live domain, so local XAMPP keeps working.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTP_HOST} ^jenmondafricanmarket\.com$ [NC]
+  RewriteRule ^ https://www.jenmondafricanmarket.com%{REQUEST_URI} [R=301,L]
+  RewriteCond %{HTTP_HOST} ^www\.jenmondafricanmarket\.com$ [NC]
+  RewriteCond %{HTTPS} off
+  RewriteCond %{HTTP:X-Forwarded-Proto} !https
+  RewriteRule ^ https://www.jenmondafricanmarket.com%{REQUEST_URI} [R=301,L]
+</IfModule>
+
+# Installable app: correct type for the manifest, and always fetch the latest service worker
+AddType application/manifest+json .webmanifest
+<IfModule mod_headers.c>
+  <FilesMatch "^(sw\.js|manifest\.webmanifest)$">
+    Header set Cache-Control "no-cache, max-age=0"
+  </FilesMatch>
+</IfModule>

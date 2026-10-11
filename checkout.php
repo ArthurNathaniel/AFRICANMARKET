@@ -31,13 +31,19 @@ if (is_post()) {
         'phone' => input('ship_phone'),
     ];
     $email = strtolower($customer['email'] ?? input('email'));
+    $pickup = pickup_enabled() && input('delivery') === 'pickup';
+    if ($pickup) $ship = ['name' => $ship['name'], 'line1' => '', 'line2' => '', 'city' => '', 'state' => '', 'zip' => '', 'phone' => $ship['phone']];
 
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) $errors[] = 'Enter a valid email address for your receipt.';
-    if (mb_strlen($ship['name']) < 2) $errors[] = 'Enter the recipient\'s full name.';
-    if (mb_strlen($ship['line1']) < 3) $errors[] = 'Enter a street address.';
-    if (mb_strlen($ship['city']) < 2) $errors[] = 'Enter a city.';
-    if (!isset($states[$ship['state']])) $errors[] = 'Choose a US state.';
-    if (!preg_match('/^\d{5}(-\d{4})?$/', $ship['zip'])) $errors[] = 'Enter a 5-digit ZIP code.';
+    if (mb_strlen($ship['name']) < 2) $errors[] = $pickup ? 'Enter the name for the pickup.' : 'Enter the recipient\'s full name.';
+    if ($pickup) {
+        if (strlen(preg_replace('/\D/', '', $ship['phone'])) < 10) $errors[] = 'Enter a phone number so we can tell you when your order is ready for pickup.';
+    } else {
+        if (mb_strlen($ship['line1']) < 3) $errors[] = 'Enter a street address.';
+        if (mb_strlen($ship['city']) < 2) $errors[] = 'Enter a city.';
+        if (!isset($states[$ship['state']])) $errors[] = 'Choose a US state.';
+        if (!preg_match('/^\d{5}(-\d{4})?$/', $ship['zip'])) $errors[] = 'Enter a 5-digit ZIP code.';
+    }
     if (!stripe_enabled() && !test_payments_enabled()) $errors[] = 'Online payments are not set up yet. Please try again later.';
 
     if (!$errors) {
@@ -45,12 +51,12 @@ if (is_post()) {
         if (!empty($_SESSION['pending_order_id'])) {
             q("DELETE FROM orders WHERE id = ? AND payment_status = 'unpaid' AND stripe_session_id IS NULL", [$_SESSION['pending_order_id']]);
         }
-        [$orderId, $errors] = create_order_from_cart($ship, $email, input_int('shipping_method'), $customer['id'] ?? null);
+        [$orderId, $errors] = create_order_from_cart($ship, $email, input_int('shipping_method'), $customer['id'] ?? null, $pickup);
     }
 
     if (!$errors) {
         $_SESSION['pending_order_id'] = $orderId;
-        if ($customer && isset($_POST['save_address'])) {
+        if ($customer && !$pickup && isset($_POST['save_address'])) {
             $isFirst = !$addresses;
             q('INSERT INTO customer_addresses (customer_id, label, full_name, line1, line2, city, state, zip, phone, is_default) VALUES (?,?,?,?,?,?,?,?,?,?)',
               [$customer['id'], 'Shipping', $ship['name'], $ship['line1'], $ship['line2'] ?: null, $ship['city'], $ship['state'], $ship['zip'], $ship['phone'] ?: null, $isFirst ? 1 : 0]);
@@ -107,7 +113,32 @@ require __DIR__ . '/partials/header.php';
       </section>
 
       <section class="panel panel-body">
-        <h2 class="step-title"><b>2</b> Shipping address</h2>
+        <h2 class="step-title"><b>2</b> Delivery</h2>
+        <?php $delivery = pickup_enabled() && ($_POST['delivery'] ?? '') === 'pickup' ? 'pickup' : 'ship'; ?>
+        <?php if (pickup_enabled()): ?>
+          <div class="delivery-choice" role="radiogroup" aria-label="Delivery method">
+            <label class="delivery-opt">
+              <input type="radio" name="delivery" value="pickup" <?= $delivery === 'pickup' ? 'checked' : '' ?>>
+              <span class="grow"><strong><i class="bi bi-shop"></i> Pickup</strong><br><span class="small text-2">Come in, or send an Uber with your order number</span></span>
+              <strong class="price">Free</strong>
+            </label>
+            <label class="delivery-opt">
+              <input type="radio" name="delivery" value="ship" <?= $delivery === 'ship' ? 'checked' : '' ?>>
+              <span class="grow"><strong><i class="bi bi-truck"></i> Ship to me</strong><br><span class="small text-2">Delivered to your door anywhere in the USA</span></span>
+              <strong class="price" id="shipChoicePrice">Free shipping</strong>
+            </label>
+          </div>
+          <div class="pickup-info" id="pickupInfo" <?= $delivery === 'pickup' ? '' : 'hidden' ?>>
+            <i class="bi bi-geo-alt-fill"></i>
+            <div>
+              <strong>Pickup location</strong>
+              <div class="text-2"><?= pickup_address() !== '' ? nl2br(e(pickup_address())) : 'We\'ll message you the pickup address as soon as your order is ready.' ?></div>
+              <?php if (setting('pickup_hours')): ?><div class="small text-2" style="margin-top:4px"><i class="bi bi-clock"></i> <?= e(setting('pickup_hours')) ?></div><?php endif; ?>
+              <div class="small" style="margin-top:8px">After paying you'll get an <strong>order number</strong>. Come in yourself, or send your Uber / driver with that number. We'll text or call when it's ready.</div>
+            </div>
+          </div>
+        <?php else: ?><input type="hidden" name="delivery" value="ship"><?php endif; ?>
+        <div id="shipFields" <?= $delivery === 'pickup' ? 'hidden' : '' ?>>
         <?php if (count($addresses) > 1): ?>
           <div class="field"><label for="savedAddress">Use a saved address</label>
             <select id="savedAddress">
@@ -117,7 +148,9 @@ require __DIR__ . '/partials/header.php';
               <?php endforeach; ?>
             </select></div>
         <?php endif; ?>
+        </div>
         <div class="field"><label for="ship_name">Full name <span class="req">*</span></label><input class="input" id="ship_name" name="ship_name" value="<?= $val('ship_name', $default['full_name'] ?? ($customer ? $customer['first_name'] . ' ' . $customer['last_name'] : '')) ?>" autocomplete="name" required></div>
+        <div id="shipAddress" <?= $delivery === 'pickup' ? 'hidden' : '' ?>>
         <div class="field"><label for="ship_line1">Street address <span class="req">*</span></label><input class="input" id="ship_line1" name="ship_line1" value="<?= $val('ship_line1', $default['line1'] ?? '') ?>" autocomplete="address-line1" required></div>
         <div class="field"><label for="ship_line2">Apartment, suite, etc.</label><input class="input" id="ship_line2" name="ship_line2" value="<?= $val('ship_line2', $default['line2'] ?? '') ?>" autocomplete="address-line2"></div>
         <div class="form-row three">
@@ -129,20 +162,20 @@ require __DIR__ . '/partials/header.php';
             </select></div>
           <div class="field"><label for="ship_zip">ZIP <span class="req">*</span></label><input class="input" id="ship_zip" name="ship_zip" value="<?= $val('ship_zip', $default['zip'] ?? '') ?>" inputmode="numeric" autocomplete="postal-code" required></div>
         </div>
-        <div class="field"><label for="ship_phone">Phone (for delivery questions)</label><input class="input" type="tel" id="ship_phone" name="ship_phone" value="<?= $val('ship_phone', $default['phone'] ?? ($customer['phone'] ?? '')) ?>" autocomplete="tel"></div>
-        <?php if ($customer && !$addresses): ?><label class="check small"><input type="checkbox" name="save_address" value="1" checked> Save this address to my account</label><?php endif; ?>
-      </section>
-
-      <section class="panel panel-body">
-        <h2 class="step-title"><b>3</b> Shipping method</h2>
-        <div class="ship-options" id="shipOptions" data-selected="<?= (int) ($_POST['shipping_method'] ?? 0) ?>">
-          <p class="text-2" style="margin:0">Choose your state to see delivery options.</p>
         </div>
-        <?php if (setting('ship_origin_note')): ?><p class="small text-2" style="margin:14px 0 0"><i class="bi bi-info-circle"></i> <?= e(setting('ship_origin_note')) ?></p><?php endif; ?>
+        <div class="field"><label for="ship_phone" id="phoneLabel"><?= $delivery === 'pickup' ? 'Phone (we\'ll text when it\'s ready) <span class="req">*</span>' : 'Phone (for delivery questions)' ?></label><input class="input" type="tel" id="ship_phone" name="ship_phone" value="<?= $val('ship_phone', $default['phone'] ?? ($customer['phone'] ?? '')) ?>" autocomplete="tel"></div>
+        <div id="shipMethod" <?= $delivery === 'pickup' ? 'hidden' : '' ?>>
+          <?php if ($customer && !$addresses): ?><label class="check small"><input type="checkbox" name="save_address" value="1" checked> Save this address to my account</label><?php endif; ?>
+          <h3 class="small" style="margin:18px 0 8px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)">Shipping method</h3>
+          <div class="ship-options" id="shipOptions" data-selected="<?= (int) ($_POST['shipping_method'] ?? 0) ?>">
+            <p class="text-2" style="margin:0">Choose your state to see delivery options.</p>
+          </div>
+          <?php if (setting('ship_origin_note')): ?><p class="small text-2" style="margin:14px 0 0"><i class="bi bi-info-circle"></i> <?= e(setting('ship_origin_note')) ?></p><?php endif; ?>
+        </div>
       </section>
 
       <section class="panel panel-body">
-        <h2 class="step-title"><b>4</b> Payment</h2>
+        <h2 class="step-title"><b>3</b> Payment</h2>
         <?php if (stripe_enabled()): ?>
           <p class="text-2" style="margin:0"><i class="bi bi-shield-lock"></i> You'll enter your card on Stripe's secure page, then come straight back here. Apple Pay and Google Pay are supported where available.</p>
           <?php if (stripe_test_mode()): ?>
@@ -195,13 +228,30 @@ $pageScripts = '<script>
   var sumShip = document.getElementById("sumShipping"), sumTotal = document.getElementById("sumTotal"), btn = document.getElementById("placeOrder");
   var canPay = !btn.disabled;
 
+  function isPickup() { var d = document.querySelector("input[name=delivery]:checked"); return !!d && d.value === "pickup"; }
   function updateTotals() {
+    if (isPickup()) {
+      sumShip.textContent = "Pickup · Free";
+      sumTotal.textContent = AFM.money(base);
+      btn.disabled = !canPay;
+      return;
+    }
     var sel = box.querySelector("input:checked");
     var cost = sel ? parseFloat(sel.getAttribute("data-cost")) : null;
     sumShip.textContent = cost === null ? "—" : (cost === 0 ? "Free" : AFM.money(cost));
     sumTotal.textContent = AFM.money(base + (cost || 0));
     btn.disabled = !canPay || !sel;
   }
+  // Pickup vs ship: show only the fields that apply.
+  function syncDelivery() {
+    var p = isPickup();
+    ["shipFields", "shipAddress", "shipMethod"].forEach(function (id) { var el = document.getElementById(id); if (el) el.hidden = p; });
+    var info = document.getElementById("pickupInfo"); if (info) info.hidden = !p;
+    document.querySelectorAll(".delivery-opt").forEach(function (l) { l.classList.toggle("on", l.querySelector("input").checked); });
+    document.getElementById("phoneLabel").innerHTML = p ? "Phone (we’ll text when it’s ready) <span class=\"req\">*</span>" : "Phone (for delivery questions)";
+    updateTotals();
+  }
+  document.querySelectorAll("input[name=delivery]").forEach(function (r) { r.addEventListener("change", syncDelivery); });
   function render() {
     var opts = table[state.value] || [];
     var want = parseInt(box.getAttribute("data-selected"), 10);
@@ -224,6 +274,7 @@ $pageScripts = '<script>
   state.addEventListener("change", function () { box.setAttribute("data-selected", "0"); render(); });
   box.addEventListener("change", updateTotals);
   render();
+  syncDelivery();
 
   var saved = document.getElementById("savedAddress");
   if (saved) saved.addEventListener("change", function () {

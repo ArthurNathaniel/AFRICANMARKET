@@ -6,18 +6,21 @@ $tabs = [
     'general'  => ['Store', 'bi-shop-window', ['super_admin', 'admin']],
     'commerce' => ['Commerce', 'bi-sliders', ['super_admin', 'admin']],
     'payments' => ['Payment gateways', 'bi-credit-card-2-front', ['super_admin']],
+    'email'    => ['Email', 'bi-envelope', ['super_admin']],
     'team'     => ['Admin team', 'bi-people', ['super_admin']],
     'profile'  => ['My profile', 'bi-person', ['super_admin', 'admin', 'manager']],
 ];
 $tab = input('tab', admin_can('super_admin', 'admin') ? 'general' : 'profile');
 if (!isset($tabs[$tab]) || !admin_can(...$tabs[$tab][2])) $tab = 'profile';
 
-$secretKeys = ['stripe_test_secret_key', 'stripe_test_webhook_secret', 'stripe_live_secret_key', 'stripe_live_webhook_secret'];
+$secretKeys = ['stripe_test_secret_key', 'stripe_test_webhook_secret', 'stripe_live_secret_key', 'stripe_live_webhook_secret', 'smtp_pass'];
 $fields = [
-    'general'  => ['store_name', 'store_tagline', 'support_email', 'support_phone', 'whatsapp_number', 'business_address'],
-    'commerce' => ['tax_rate', 'order_prefix', 'low_stock_threshold'],
+    'general'  => ['store_name', 'store_tagline', 'support_email', 'support_phone', 'whatsapp_number', 'business_address',
+                   'social_facebook', 'social_instagram', 'social_tiktok', 'social_x', 'pickup_enabled', 'pickup_address', 'pickup_hours'],
+    'commerce' => ['tax_rate', 'order_prefix', 'low_stock_threshold', 'card_fee_percent', 'card_fee_fixed'],
     'payments' => ['stripe_mode', 'stripe_test_publishable_key', 'stripe_test_secret_key', 'stripe_test_webhook_secret',
                    'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_live_webhook_secret'],
+    'email'    => ['smtp_host', 'smtp_port', 'smtp_secure', 'smtp_user', 'smtp_pass', 'mail_from'],
 ];
 $errors = [];
 
@@ -27,11 +30,30 @@ if (is_post()) {
 
     if (isset($fields[$action])) {
         require_role(...$tabs[$action][2]);
-        if ($action === 'general' && !filter_var(input('support_email'), FILTER_VALIDATE_EMAIL)) $errors[] = 'Enter a valid support email.';
+        if ($action === 'general') {
+            $emails = array_filter(array_map('trim', explode(',', input('support_email'))));
+            if (!$emails) $errors[] = 'Enter at least one support email.';
+            foreach ($emails as $em) if (!filter_var($em, FILTER_VALIDATE_EMAIL)) $errors[] = "“{$em}” is not a valid email address.";
+            foreach (['social_facebook' => 'Facebook', 'social_instagram' => 'Instagram', 'social_tiktok' => 'TikTok', 'social_x' => 'X'] as $key => $label) {
+                $link = input($key);
+                if ($link !== '' && !preg_match('#^https?://[^\s]+\.[^\s]+#i', $link)) $errors[] = "$label link must be a full web address starting with https://";
+            }
+        }
         if ($action === 'commerce') {
             $tax = input_decimal('tax_rate');
             if ($tax === null || $tax < 0 || $tax > 30) $errors[] = 'Tax rate must be between 0 and 30%.';
             if (!preg_match('/^[A-Z0-9]{2,6}$/', strtoupper(input('order_prefix')))) $errors[] = 'Order prefix must be 2–6 letters or numbers.';
+            $fp = input_decimal('card_fee_percent'); $ff = input_decimal('card_fee_fixed');
+            if ($fp === null || $fp < 0 || $fp > 10) $errors[] = 'Card fee percentage must be between 0 and 10%.';
+            if ($ff === null || $ff < 0 || $ff > 5) $errors[] = 'Card fee per payment must be between $0 and $5.';
+        }
+        if ($action === 'email') {
+            if (input('smtp_host') !== '' && !preg_match('/^[a-z0-9.-]+\.[a-z]{2,}$/i', input('smtp_host'))) $errors[] = 'SMTP server should look like smtp.gmail.com.';
+            if (input('smtp_port') !== '' && !in_array((int) input('smtp_port'), [25, 465, 587, 2525], true)) $errors[] = 'SMTP port is usually 587 (TLS) or 465 (SSL).';
+            if (!in_array(input('smtp_secure'), ['tls', 'ssl'], true)) $errors[] = 'Choose TLS or SSL encryption.';
+            if (input('smtp_user') !== '' && !filter_var(input('smtp_user'), FILTER_VALIDATE_EMAIL) && strpos(input('smtp_host'), 'gmail') !== false) $errors[] = 'For Gmail, the username is your full Gmail address.';
+            if (input('mail_from') !== '' && !filter_var(input('mail_from'), FILTER_VALIDATE_EMAIL)) $errors[] = 'From email must be a valid email address.';
+            $_POST['smtp_pass'] = str_replace(' ', '', input('smtp_pass')); // Gmail shows app passwords in groups of 4
         }
         if ($action === 'payments') {
             if (!in_array(input('stripe_mode'), ['test', 'live'], true)) $errors[] = 'Choose test or live mode.';
@@ -51,6 +73,7 @@ if (is_post()) {
             foreach ($fields[$action] as $key) {
                 $value = input($key);
                 if (in_array($key, $secretKeys, true) && $value === '') continue; // blank = keep existing secret
+                if ($key === 'pickup_enabled') $value = isset($_POST['pickup_enabled']) ? '1' : '0'; // unchecked box sends nothing
                 if ($key === 'order_prefix') $value = strtoupper($value);
                 save_setting($key, $value);
             }
@@ -59,6 +82,25 @@ if (is_post()) {
             redirect('admin/settings.php?tab=' . $action);
         }
         $tab = $action;
+    }
+
+    if ($action === 'email_test') {
+        require_role('super_admin');
+        $to = support_emails() ?: [$admin['email']];
+        $store = setting('store_name', APP_NAME);
+        $sent = [];
+        foreach ($to as $addr) {
+            $ok = send_html_mail($addr, "Test email from $store",
+                '<div style="font-family:Arial,sans-serif;font-size:15px"><h2 style="color:#0d4a32">It works!</h2><p>This test email from <strong>' . e($store) . '</strong> arrived, so order notifications and customer receipts will be delivered.</p><p style="color:#777;font-size:13px">Sent ' . date('M j, Y g:i A') . ' via ' . (smtp_enabled() ? 'SMTP (' . e(setting('smtp_host')) . ')' : 'PHP mail()') . '.</p></div>',
+                "It works! This test email from $store arrived, so order notifications and receipts will be delivered.");
+            if (!$ok) {
+                flash('error', "Couldn't send to $addr: " . mail_last_error());
+                redirect('admin/settings.php?tab=email');
+            }
+            $sent[] = $addr;
+        }
+        flash('success', 'Test email sent to ' . implode(' and ', $sent) . '. Check the inbox (and the spam folder).');
+        redirect('admin/settings.php?tab=email');
     }
 
     if ($action === 'stripe_check') {
@@ -146,13 +188,32 @@ require __DIR__ . '/includes/header.php';
           <div class="field"><label for="store_tagline">Tagline</label><input class="input" id="store_tagline" name="store_tagline" value="<?= $v('store_tagline', APP_TAGLINE) ?>"></div>
         </div>
         <div class="form-row">
-          <div class="field"><label for="support_email">Support email</label><input class="input" type="email" id="support_email" name="support_email" value="<?= $v('support_email') ?>" required></div>
+          <div class="field"><label for="support_email">Support email</label><input class="input" id="support_email" name="support_email" value="<?= $v('support_email') ?>" required><div class="hint">Separate multiple emails with commas. All get new-order alerts; the first is shown to customers for help.</div></div>
           <div class="field"><label for="support_phone">Support phone</label><input class="input" id="support_phone" name="support_phone" value="<?= $v('support_phone') ?>" placeholder="+1 (555) 000-0000"><div class="hint">Separate multiple numbers with commas.</div></div>
         </div>
         <div class="field"><label for="whatsapp_number">WhatsApp number for orders</label><input class="input" id="whatsapp_number" name="whatsapp_number" value="<?= $v('whatsapp_number') ?>" placeholder="(555) 000-0000">
           <div class="hint">Shows “Order via WhatsApp” buttons in the store. Leave blank to hide them.</div></div>
         <div class="field"><label for="business_address">US business address</label><textarea class="input" id="business_address" name="business_address" rows="3"><?= $v('business_address') ?></textarea>
           <div class="hint">Shown on invoices and used as the returns address.</div></div>
+        <h3 style="font-size:15px;margin:22px 0 4px">Store pickup</h3>
+        <p class="small muted" style="margin:0 0 12px">Lets customers choose <strong>Pickup</strong> at checkout — they come in, or send an Uber / driver with their order number.</p>
+        <label class="check mb"><input type="checkbox" name="pickup_enabled" value="1" <?= setting('pickup_enabled', '1') === '1' ? 'checked' : '' ?>> Offer pickup at checkout</label>
+        <div class="form-row">
+          <div class="field"><label for="pickup_address">Pickup address</label><textarea class="input" id="pickup_address" name="pickup_address" rows="3" placeholder="Street, city, state ZIP"><?= $v('pickup_address') ?></textarea>
+            <div class="hint">Shown at checkout, on the confirmation page and in emails. Blank uses the business address.</div></div>
+          <div class="field"><label for="pickup_hours">Pickup hours</label><input class="input" id="pickup_hours" name="pickup_hours" value="<?= $v('pickup_hours') ?>" placeholder="Mon–Sat 10am – 6pm">
+            <div class="hint">Optional. Shown with the address.</div></div>
+        </div>
+        <h3 style="font-size:15px;margin:22px 0 4px">Social media</h3>
+        <p class="small muted" style="margin:0 0 12px">Paste the full link to each profile. Icons show in the store footer; leave blank to hide one.</p>
+        <div class="form-row">
+          <div class="field"><label for="social_facebook"><i class="bi bi-facebook"></i> Facebook</label><input class="input" type="url" id="social_facebook" name="social_facebook" value="<?= $v('social_facebook') ?>" placeholder="https://facebook.com/yourpage"></div>
+          <div class="field"><label for="social_instagram"><i class="bi bi-instagram"></i> Instagram</label><input class="input" type="url" id="social_instagram" name="social_instagram" value="<?= $v('social_instagram') ?>" placeholder="https://instagram.com/yourhandle"></div>
+        </div>
+        <div class="form-row">
+          <div class="field"><label for="social_tiktok"><i class="bi bi-tiktok"></i> TikTok</label><input class="input" type="url" id="social_tiktok" name="social_tiktok" value="<?= $v('social_tiktok') ?>" placeholder="https://tiktok.com/@yourhandle"></div>
+          <div class="field"><label for="social_x"><i class="bi bi-twitter-x"></i> X (Twitter)</label><input class="input" type="url" id="social_x" name="social_x" value="<?= $v('social_x') ?>" placeholder="https://x.com/yourhandle"></div>
+        </div>
         <div class="form-actions" style="justify-content:flex-start"><button class="btn btn-primary" type="submit">Save store settings</button></div>
       </form>
 
@@ -168,6 +229,12 @@ require __DIR__ . '/includes/header.php';
             <div class="hint">For state-accurate tax, connect a tax service at checkout.</div></div>
           <div class="field"><label for="low_stock_threshold">Low-stock alert at</label><div class="input-group"><input class="input" type="number" min="0" id="low_stock_threshold" name="low_stock_threshold" value="<?= $v('low_stock_threshold', '5') ?>"><span class="addon">units</span></div>
             <div class="hint">Shown as “Only X left” in the store.</div></div>
+        </div>
+        <h3 style="font-size:15px;margin:18px 0 4px">Card processing fees</h3>
+        <p class="small muted" style="margin:0 0 12px">Used by <strong>Reports</strong> to estimate what Stripe keeps from each card payment. Stripe's standard US rate is 2.9% + $0.30; check your Stripe dashboard if you have a different rate.</p>
+        <div class="form-row">
+          <div class="field"><label for="card_fee_percent">Percentage per payment</label><div class="input-group"><input class="input" id="card_fee_percent" name="card_fee_percent" inputmode="decimal" value="<?= $v('card_fee_percent', '2.9') ?>"><span class="addon">%</span></div></div>
+          <div class="field"><label for="card_fee_fixed">Fixed fee per payment</label><div class="input-group"><span class="addon">$</span><input class="input" id="card_fee_fixed" name="card_fee_fixed" inputmode="decimal" value="<?= $v('card_fee_fixed', '0.30') ?>"></div></div>
         </div>
         <div class="form-actions" style="justify-content:flex-start"><button class="btn btn-primary" type="submit">Save commerce settings</button></div>
       </form>
@@ -206,6 +273,53 @@ require __DIR__ . '/includes/header.php';
       <?php foreach (['test', 'live'] as $m): ?>
         <form method="post" id="stripeCheck<?= ucfirst($m) ?>" hidden><?= csrf_field() ?><input type="hidden" name="action" value="stripe_check"><input type="hidden" name="mode" value="<?= $m ?>"></form>
       <?php endforeach; ?>
+
+    <?php elseif ($tab === 'email'): $smtpOn = smtp_enabled(); $secure = setting('smtp_secure', 'tls'); ?>
+      <div style="max-width:720px">
+        <div class="alert alert-<?= $smtpOn ? 'success' : 'warning' ?>"><i class="bi bi-<?= $smtpOn ? 'check-circle' : 'exclamation-triangle' ?>"></i><div>
+          <?php if ($smtpOn): ?><strong>Emails are sent through <?= e(setting('smtp_host')) ?></strong> as <?= e(mail_from_address()) ?>.
+          <?php else: ?><strong>SMTP isn't set up yet.</strong> Emails use the server's basic mail, which often lands in spam or isn't sent at all. Add an email account below so order alerts and receipts arrive reliably.<?php endif; ?>
+        </div></div>
+
+        <form method="post">
+          <?= csrf_field() ?><input type="hidden" name="action" value="email">
+          <div class="field"><span class="label">Quick setup</span>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-sm" type="button" data-smtp="smtp.gmail.com,587,tls"><i class="bi bi-google"></i>Gmail</button>
+              <button class="btn btn-sm" type="button" data-smtp="smtp-relay.brevo.com,587,tls"><i class="bi bi-send"></i>Brevo</button>
+              <button class="btn btn-sm" type="button" data-smtp="smtp.hostinger.com,465,ssl"><i class="bi bi-hdd-network"></i>Hostinger email</button>
+            </div>
+            <div class="hint">Fills in the server details. Then enter the username and password.</div></div>
+          <div class="form-row three">
+            <div class="field" style="grid-column:span 2"><label for="smtp_host">SMTP server</label><input class="input" id="smtp_host" name="smtp_host" value="<?= $v('smtp_host') ?>" placeholder="smtp.gmail.com"></div>
+            <div class="field"><label for="smtp_port">Port</label><input class="input" id="smtp_port" name="smtp_port" value="<?= $v('smtp_port', '587') ?>" inputmode="numeric"></div>
+          </div>
+          <div class="form-row">
+            <div class="field"><label for="smtp_secure">Encryption</label>
+              <select id="smtp_secure" name="smtp_secure"><option value="tls" <?= $secure === 'tls' ? 'selected' : '' ?>>TLS (port 587)</option><option value="ssl" <?= $secure === 'ssl' ? 'selected' : '' ?>>SSL (port 465)</option></select></div>
+            <div class="field"><label for="mail_from">From email <span class="muted">(optional)</span></label><input class="input" type="email" id="mail_from" name="mail_from" value="<?= $v('mail_from') ?>" placeholder="Same as username">
+              <div class="hint">Gmail always sends from your Gmail address.</div></div>
+          </div>
+          <div class="form-row">
+            <div class="field"><label for="smtp_user">Username</label><input class="input" id="smtp_user" name="smtp_user" value="<?= $v('smtp_user') ?>" placeholder="jenmondmobile@gmail.com" autocomplete="off"></div>
+            <div class="field"><label for="smtp_pass">Password / app password</label><input class="input" type="password" id="smtp_pass" name="smtp_pass" placeholder="<?= setting('smtp_pass') ? '•••••••• saved — leave blank to keep' : 'xxxx xxxx xxxx xxxx' ?>" autocomplete="new-password"></div>
+          </div>
+          <details class="small" style="margin:-4px 0 16px"><summary style="cursor:pointer;font-weight:600">How to get a Gmail app password</summary>
+            <ol style="margin:8px 0 0;padding-left:20px;line-height:1.7">
+              <li>Sign in to the Gmail account at <a href="https://myaccount.google.com/security" target="_blank" rel="noopener">myaccount.google.com/security</a> and turn on <strong>2-Step Verification</strong>.</li>
+              <li>Open <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>, name it “Jenmond website”, and click <strong>Create</strong>.</li>
+              <li>Copy the 16-letter password into the box above (spaces are fine) and save. Use the Gmail address as the username.</li>
+            </ol></details>
+          <div class="form-actions" style="justify-content:flex-start"><button class="btn btn-primary" type="submit">Save email settings</button></div>
+        </form>
+
+        <form method="post" style="margin-top:22px;padding-top:18px;border-top:1px solid var(--border)">
+          <?= csrf_field() ?><input type="hidden" name="action" value="email_test">
+          <p class="small muted" style="margin:0 0 10px">Sends a test email to <?= e(implode(' and ', support_emails() ?: [$admin['email']])) ?> using the saved settings.</p>
+          <button class="btn" type="submit"><i class="bi bi-send-check"></i>Send test email</button>
+        </form>
+      </div>
+      <?php $pageScripts = '<script>document.querySelectorAll("[data-smtp]").forEach(function (b) { b.addEventListener("click", function () { var p = b.getAttribute("data-smtp").split(","); document.getElementById("smtp_host").value = p[0]; document.getElementById("smtp_port").value = p[1]; document.getElementById("smtp_secure").value = p[2]; document.getElementById("smtp_user").focus(); }); });</script>'; ?>
 
     <?php elseif ($tab === 'team'):
       $team = fetch_all('SELECT id, name, email, role, status, last_login_at, created_at FROM admins ORDER BY FIELD(status, \'pending\') DESC, created_at'); ?>

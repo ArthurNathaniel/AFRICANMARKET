@@ -71,6 +71,18 @@ $rail = function (string $id, string $title, string $sub, array $items, string $
     </section>
 <?php };
 
+// ---- SEO: homepage title/description + store and site-search structured data ----
+$storeName = setting('store_name', APP_NAME);
+$metaTitle = $storeName . ' – African Groceries Delivered Across the USA';
+$metaDescription = 'Shop Milo, Peak milk, Malta, chinchin, spices and more — the African brands you grew up with, delivered to your door anywhere in the USA. Order online or on WhatsApp.';
+$canonical = absolute_url('/');
+$schema = [
+    organization_schema(),
+    ['@type' => 'WebSite', '@id' => $canonical . '#website', 'name' => $storeName, 'url' => $canonical,
+     'publisher' => ['@id' => $canonical . '#organization'],
+     'potentialAction' => ['@type' => 'SearchAction', 'target' => ['@type' => 'EntryPoint', 'urlTemplate' => absolute_url('shop.php') . '?q={search_term_string}'], 'query-input' => 'required name=search_term_string']],
+];
+
 require __DIR__ . '/partials/header.php';
 ?>
 <section class="h-hero">

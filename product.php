@@ -11,6 +11,7 @@ $isPreview = $p && $p['status'] !== 'active';
 if (!$p || ($isPreview && !current_admin())) {
     http_response_code(404);
     $pageTitle = 'Product not found';
+    $metaRobots = 'noindex, follow';
     require __DIR__ . '/partials/header.php'; ?>
     <div class="wrap section"><div class="empty-state"><i class="bi bi-box-seam"></i><h3>This product isn't available</h3><p>It may have sold out or been removed.</p><a class="btn btn-primary" href="<?= url('shop.php') ?>">Keep shopping</a></div></div>
     <?php require __DIR__ . '/partials/footer.php';
@@ -64,7 +65,24 @@ $inCart = cart_raw()[$p['id']] ?? 0;
 $storeName = setting('store_name', APP_NAME);
 
 $pageTitle = $p['name'];
-$metaDescription = $p['short_description'] ?: mb_strimwidth((string) $p['description'], 0, 155, '…');
+// ---- SEO: title, description, social cards and Product structured data ----
+$metaTitle = $p['name'] . ($p['origin_country'] ? ' from ' . $p['origin_country'] : '') . ' – Buy Online in the USA | ' . $storeName;
+$metaDescription = product_meta_description($p);
+$canonical = absolute_url('product.php?slug=' . urlencode($p['slug']));
+$imageUrls = array_map(fn($g) => full_url(image_url($g)), $gallery);
+$metaImage = $imageUrls[0] ?? null;
+$metaImageAlt = $p['name'];
+$metaType = 'product';
+$metaRobots = $isPreview ? 'noindex, nofollow' : null;
+$metaOg = array_filter([
+    'product:price:amount' => number_format((float) $p['price'], 2, '.', ''),
+    'product:price:currency' => 'USD',
+    'product:availability' => $p['stock_qty'] > 0 ? 'in stock' : 'out of stock',
+    'product:condition' => 'new',
+    'product:retailer_item_id' => $p['sku'] ?: (string) $p['id'],
+    'product:category' => $p['category_name'],
+]);
+$schema = $isPreview ? [] : product_schema($p, $imageUrls ?: [full_url(asset('img/logo-badge.png'))], $reviews, $reviewCount, $avg);
 require __DIR__ . '/partials/header.php';
 ?>
 <div class="wrap">
@@ -109,7 +127,7 @@ require __DIR__ . '/partials/header.php';
 
       <div class="buy-box">
         <?php if ($p['stock_qty'] > 0 && !$isPreview): ?>
-          <form method="post" action="<?= url('cart.php') ?>" style="display:contents">
+          <form method="post" action="<?= url('cart.php') ?>" style="display:contents" data-quick-add data-fly-from="#mainImage">
             <?= csrf_field() ?><input type="hidden" name="action" value="add"><input type="hidden" name="product_id" value="<?= (int) $p['id'] ?>">
             <div class="qty"><button type="button" data-step="-1" aria-label="Decrease quantity">−</button><input type="number" name="qty" value="1" min="1" max="<?= min(99, (int) $p['stock_qty']) ?>" aria-label="Quantity"><button type="button" data-step="1" aria-label="Increase quantity">+</button></div>
             <button class="btn btn-primary btn-lg" type="submit"><i class="bi bi-bag-plus"></i> Add to cart</button>

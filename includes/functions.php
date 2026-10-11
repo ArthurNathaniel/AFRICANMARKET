@@ -34,6 +34,8 @@ function db(): PDO
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES   => false,
         ]);
+        // Match the tables' collation (schema.sql) so text comparisons never mix collations on any host.
+        $pdo->exec('SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci');
         // Keep MySQL NOW()/CURRENT_TIMESTAMP in the same timezone as PHP's date().
         $pdo->exec("SET time_zone = '" . date('P') . "'");
     }
@@ -89,16 +91,19 @@ function url(string $path = ''): string
     return base_url() . '/' . ltrim($path, '/');
 }
 
+/** URL of a file in /assets, stamped with its last-modified time so browsers fetch updates immediately. */
 function asset(string $path): string
 {
-    return url('assets/' . ltrim($path, '/'));
+    $path = ltrim($path, '/');
+    $file = ROOT_PATH . '/assets/' . $path;
+    return url('assets/' . $path) . (is_file($file) ? '?v=' . filemtime($file) : '');
 }
 
 /** Logo badge + wordmark. $tone: 'dark' text for light backgrounds, 'light' for dark ones. */
 function brand_lockup(string $tone = 'dark', string $class = ''): string
 {
     return '<span class="brand-lockup brand-' . $tone . ($class ? ' ' . $class : '') . '">'
-         . '<img src="' . asset('img/logo-badge-160.png') . '" alt="" width="160" height="160">'
+         . '<img src="' . asset('img/logo-badge-200.png') . '" alt="" width="200" height="200">'
          . '<span class="brand-words"><strong>Jenmond</strong><small>Mobile African Market</small></span></span>';
 }
 
@@ -107,6 +112,20 @@ function favicon_tags(): string
 {
     return '<link rel="icon" type="image/png" sizes="64x64" href="' . asset('img/favicon.png') . '">'
          . "\n  " . '<link rel="apple-touch-icon" href="' . asset('img/apple-touch-icon.png') . '">';
+}
+
+/** Tags that make the storefront installable as an app (manifest, theme colour, iPhone home-screen settings). */
+function app_tags(): string
+{
+    return implode("\n  ", [
+        '<link rel="manifest" href="' . url('manifest.webmanifest') . '">',
+        '<meta name="theme-color" content="#0d4a32">',
+        '<meta name="mobile-web-app-capable" content="yes">',
+        '<meta name="apple-mobile-web-app-capable" content="yes">',
+        '<meta name="apple-mobile-web-app-status-bar-style" content="default">',
+        '<meta name="apple-mobile-web-app-title" content="Jenmond">',
+        '<meta name="application-name" content="Jenmond">',
+    ]);
 }
 
 function e($value): string
@@ -239,6 +258,28 @@ function save_setting(string $key, ?string $value): void
 function support_phones(): array
 {
     return array_values(array_filter(array_map('trim', explode(',', (string) setting('support_phone', '')))));
+}
+
+/** Support email addresses from settings (comma-separated); the first is the main one. */
+function support_emails(): array
+{
+    return array_values(array_filter(array_map('trim', explode(',', (string) setting('support_email', '')))));
+}
+
+/** Social profiles that have a link set: [label, bootstrap icon, url]. */
+function social_links(): array
+{
+    $networks = [
+        'social_facebook'  => ['Facebook', 'bi-facebook'],
+        'social_instagram' => ['Instagram', 'bi-instagram'],
+        'social_tiktok'    => ['TikTok', 'bi-tiktok'],
+        'social_x'         => ['X', 'bi-twitter-x'],
+    ];
+    $out = [];
+    foreach ($networks as $key => [$label, $icon]) {
+        if ($link = trim((string) setting($key, ''))) $out[] = [$label, $icon, $link];
+    }
+    return $out;
 }
 
 /** tel: link target for a US phone number, e.g. "(987) 908-6393" → "+19879086393". */
@@ -443,9 +484,119 @@ function image_url(?string $relPath): string
  * ------------------------------------------------------------------------- */
 function send_mail(string $to, string $subject, string $body): bool
 {
-    $headers = 'From: ' . setting('store_name', APP_NAME) . ' <' . MAIL_FROM . ">\r\n"
-             . "Content-Type: text/plain; charset=UTF-8\r\n";
-    return @mail($to, $subject, $body, $headers);
+    return deliver_mail($to, $subject, "Content-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64", chunk_split(base64_encode($body)));
+}
+
+/** Sends an HTML email with a plain-text alternative (multipart/alternative). */
+function send_html_mail(string $to, string $subject, string $html, string $text, ?string $replyTo = null): bool
+{
+    $boundary = 'b' . bin2hex(random_bytes(12));
+    $body = "--$boundary\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n"
+          . chunk_split(base64_encode($text))
+          . "--$boundary\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n"
+          . chunk_split(base64_encode($html))
+          . "--$boundary--\r\n";
+    return deliver_mail($to, $subject, "Content-Type: multipart/alternative; boundary=\"$boundary\"", $body, $replyTo);
+}
+
+/** Sender address: the "From email" setting, else the SMTP login, else MAIL_FROM. */
+function mail_from_address(): string
+{
+    $from = trim((string) setting('mail_from', ''));
+    if (!filter_var($from, FILTER_VALIDATE_EMAIL)) $from = trim((string) setting('smtp_user', ''));
+    return filter_var($from, FILTER_VALIDATE_EMAIL) ? $from : MAIL_FROM;
+}
+
+function smtp_enabled(): bool
+{
+    return setting('smtp_host', '') !== '' && setting('smtp_user', '') !== '' && setting('smtp_pass', '') !== '';
+}
+
+/** Last delivery error (shown by Settings → Email → Send test email). */
+function mail_last_error(?string $set = null): string
+{
+    static $err = '';
+    if ($set !== null) $err = $set;
+    return $err;
+}
+
+/** Sends one message via SMTP when configured (Admin → Settings → Email), otherwise PHP mail(). */
+function deliver_mail(string $to, string $subject, string $contentHeaders, string $body, ?string $replyTo = null): bool
+{
+    mail_last_error('');
+    $fromAddr = mail_from_address();
+    $from = mb_encode_mimeheader(setting('store_name', APP_NAME), 'UTF-8') . " <$fromAddr>";
+    $encSubject = mb_encode_mimeheader($subject, 'UTF-8');
+    $headers = "From: $from\r\n"
+             . ($replyTo && filter_var($replyTo, FILTER_VALIDATE_EMAIL) ? "Reply-To: $replyTo\r\n" : '')
+             . "MIME-Version: 1.0\r\n" . $contentHeaders . "\r\n";
+    try {
+        if (smtp_enabled()) {
+            $domain = substr((string) strrchr($fromAddr, '@'), 1) ?: 'localhost';
+            $full = 'Date: ' . date('r') . "\r\nTo: <$to>\r\nSubject: $encSubject\r\nMessage-ID: <" . bin2hex(random_bytes(12)) . "@$domain>\r\n" . $headers;
+            smtp_send($to, $fromAddr, $full, $body);
+            return true;
+        }
+        if (!@mail($to, $encSubject, $body, rtrim($headers, "\r\n"))) {
+            throw new RuntimeException('PHP mail() could not send — this server has no mail service. Set up SMTP in Settings → Email.');
+        }
+        return true;
+    } catch (Throwable $ex) {
+        mail_last_error($ex->getMessage());
+        error_log("Email to $to failed ($subject): " . $ex->getMessage());
+        return false;
+    }
+}
+
+/** Minimal SMTP client: SSL (port 465) or STARTTLS (port 587) with AUTH LOGIN. Throws RuntimeException on failure. */
+function smtp_send(string $to, string $from, string $headers, string $body): void
+{
+    $host = trim((string) setting('smtp_host'));
+    $port = (int) setting('smtp_port', 587) ?: 587;
+    $secure = (string) setting('smtp_secure', $port === 465 ? 'ssl' : 'tls');
+    $ctx = stream_context_create(['ssl' => ['verify_peer' => true, 'verify_peer_name' => true, 'SNI_enabled' => true, 'peer_name' => $host]]);
+    $fp = @stream_socket_client(($secure === 'ssl' ? 'ssl://' : 'tcp://') . $host . ':' . $port, $errno, $errstr, 15, STREAM_CLIENT_CONNECT, $ctx);
+    if (!$fp) throw new RuntimeException("Could not connect to $host:$port" . ($errstr ? " ($errstr)" : ''));
+    stream_set_timeout($fp, 20);
+
+    $read = function () use ($fp): string {
+        $resp = '';
+        while (($line = fgets($fp, 515)) !== false) {
+            $resp .= $line;
+            if (strlen($line) < 4 || $line[3] === ' ') break;
+        }
+        return $resp;
+    };
+    $cmd = function (?string $line, array $ok, string $label = '') use ($fp, $read): string {
+        if ($line !== null) fwrite($fp, $line . "\r\n");
+        $resp = $read();
+        if (!in_array((int) substr($resp, 0, 3), $ok, true)) {
+            throw new RuntimeException('SMTP ' . ($label ?: strtok((string) $line, ' ') ?: 'connect') . ' failed: ' . (trim($resp) ?: 'connection closed'));
+        }
+        return $resp;
+    };
+
+    try {
+        $ehloName = parse_url(base_url() ?: 'http://localhost', PHP_URL_HOST) ?: 'localhost';
+        $cmd(null, [220], 'greeting');
+        $cmd("EHLO $ehloName", [250]);
+        if ($secure === 'tls') {
+            $cmd('STARTTLS', [220]);
+            if (!stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT)) throw new RuntimeException('Could not start TLS encryption');
+            $cmd("EHLO $ehloName", [250]);
+        }
+        $cmd('AUTH LOGIN', [334]);
+        $cmd(base64_encode((string) setting('smtp_user')), [334], 'username');
+        $cmd(base64_encode((string) setting('smtp_pass')), [235], 'password (check the app password)');
+        $cmd("MAIL FROM:<$from>", [250]);
+        $cmd("RCPT TO:<$to>", [250, 251]);
+        $cmd('DATA', [354]);
+        $data = $headers . "\r\n" . preg_replace('/^\./m', '..', str_replace(["\r\n", "\n"], ["\n", "\r\n"], $body));
+        $cmd(rtrim($data, "\r\n") . "\r\n.", [250], 'message send');
+        $cmd('QUIT', [221]);
+    } finally {
+        fclose($fp);
+    }
 }
 
 /* ---------------------------------------------------------------------------

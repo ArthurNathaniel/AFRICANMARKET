@@ -51,113 +51,22 @@
     });
   });
 
-  // White background: <input type="file" data-white-bg> + <input type="checkbox" id="whiteBgToggle">
-  // Removes the photo background in the browser and flattens it onto white before upload.
-  var bgToggle = document.getElementById('whiteBgToggle');
-  var bgInputs = document.querySelectorAll('input[type=file][data-white-bg]');
-  if (bgToggle && bgInputs.length) {
-    var BG_LIB = 'https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/+esm';
-    var MAX_SIDE = 2000;
-    var libPromise = null;
-    var pending = 0;
-    var form = bgToggle.closest('form');
-
-    var loadLib = function () {
-      if (!libPromise) libPromise = import(BG_LIB).catch(function (err) { libPromise = null; throw err; });
-      return libPromise;
-    };
-    var setStatus = function (input, text) {
-      var el = document.querySelector('[data-white-bg-status="' + input.name + '"]');
-      if (el) el.textContent = text;
-    };
-    // Shows the given files in the input's preview (main image or gallery grid).
-    var showPreview = function (input, files, processing) {
-      var img = document.getElementById(input.getAttribute('data-preview'));
-      if (img && files[0]) {
-        img.src = URL.createObjectURL(files[0]);
-        img.classList.toggle('is-processing', processing);
-      }
-      var grid = document.querySelector('[data-white-bg-preview="' + input.name + '"]');
-      if (grid) {
-        grid.innerHTML = '';
-        grid.hidden = !files.length;
-        files.forEach(function (f) {
-          var thumb = document.createElement('img');
-          thumb.src = URL.createObjectURL(f);
-          thumb.alt = f.name;
-          thumb.title = f.name;
-          if (processing) thumb.className = 'is-processing';
-          grid.appendChild(thumb);
-        });
-      }
-    };
-    var setFiles = function (input, files) {
-      var dt = new DataTransfer();
-      files.forEach(function (f) { dt.items.add(f); });
-      input.files = dt.files;
-      showPreview(input, files, false);
-    };
-    var toWhiteJpeg = function (cutout, name) {
-      return createImageBitmap(cutout).then(function (bmp) {
-        var scale = Math.min(1, MAX_SIDE / Math.max(bmp.width, bmp.height));
-        var canvas = document.createElement('canvas');
-        canvas.width = Math.round(bmp.width * scale);
-        canvas.height = Math.round(bmp.height * scale);
-        var ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
-        return new Promise(function (resolve) { canvas.toBlob(resolve, 'image/jpeg', 0.92); });
-      }).then(function (blob) {
-        return new File([blob], name.replace(/\.[^.]+$/, '') + '-white.jpg', { type: 'image/jpeg' });
-      });
-    };
-    var process = function (input) {
-      var originals = input._originals || [];
-      var token = input._bgToken = (input._bgToken || 0) + 1;
-      if (!originals.length) { setStatus(input, ''); return; }
-      if (!bgToggle.checked) { setFiles(input, originals); setStatus(input, ''); return; }
-
-      pending++;
-      var done = 0;
-      showPreview(input, originals, true);
-      setStatus(input, 'Removing background… (first run downloads the AI model, this can take a minute)');
-      loadLib().then(function (lib) {
-        return Promise.all(originals.map(function (file) {
-          return lib.removeBackground(file).then(function (cutout) {
-            return toWhiteJpeg(cutout, file.name);
-          }).then(function (out) {
-            done++;
-            if (input._bgToken === token) setStatus(input, 'Removing background… ' + done + '/' + originals.length);
-            return out;
-          });
-        }));
-      }).then(function (files) {
-        if (input._bgToken !== token) return;
-        setFiles(input, files);
-        setStatus(input, 'Background removed — ' + files.length + ' image' + (files.length > 1 ? 's' : '') + ' ready on white.');
-      }).catch(function (err) {
-        if (input._bgToken !== token) return;
-        console.error(err);
-        setFiles(input, originals);
-        setStatus(input, 'Could not remove the background, the original image will be uploaded.');
-      }).finally(function () { pending--; });
-    };
-
-    bgInputs.forEach(function (input) {
-      input.addEventListener('change', function () {
-        input._originals = Array.prototype.slice.call(input.files || []);
-        process(input);
+  // Multi-image preview: <input type="file" multiple data-preview-grid="gridId">
+  document.querySelectorAll('input[type=file][data-preview-grid]').forEach(function (input) {
+    input.addEventListener('change', function () {
+      var grid = document.getElementById(input.getAttribute('data-preview-grid'));
+      if (!grid) return;
+      grid.innerHTML = '';
+      grid.hidden = !input.files.length;
+      Array.prototype.forEach.call(input.files, function (f) {
+        var thumb = document.createElement('img');
+        thumb.src = URL.createObjectURL(f);
+        thumb.alt = f.name;
+        thumb.title = f.name;
+        grid.appendChild(thumb);
       });
     });
-    bgToggle.addEventListener('change', function () { bgInputs.forEach(process); });
-    if (form) form.addEventListener('submit', function (e) {
-      if (pending > 0) {
-        e.preventDefault();
-        window.alert('Please wait, images are still being processed.');
-      }
-    });
-  }
+  });
 
   // Auto slug: <input data-slug-source="#slug">
   document.querySelectorAll('[data-slug-target]').forEach(function (src) {

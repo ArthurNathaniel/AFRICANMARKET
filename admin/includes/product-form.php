@@ -174,10 +174,9 @@ function render_product_form(array $p, array $gallery, array $errors, string $su
             <div class="dropzone">
               <i class="bi bi-images" style="font-size:22px"></i>
               <div>Add more photos (JPG, PNG, WEBP · max <?= MAX_UPLOAD_MB ?>MB each)</div>
-              <input type="file" name="gallery[]" accept="image/jpeg,image/png,image/webp,image/gif" multiple data-white-bg>
+              <input type="file" name="gallery[]" accept="image/jpeg,image/png,image/webp,image/gif" multiple data-preview-grid="galleryPreview">
             </div>
-            <div class="hint" data-white-bg-status="gallery[]"></div>
-            <div class="gallery mt" data-white-bg-preview="gallery[]" hidden></div>
+            <div class="gallery mt" id="galleryPreview" hidden></div>
           </div>
         </div>
       </div>
@@ -226,10 +225,7 @@ function render_product_form(array $p, array $gallery, array $errors, string $su
           <div class="card-head"><h2>Main image</h2></div>
           <div class="card-body">
             <img id="mainPreview" class="img-preview mb" src="<?= e(image_url($p['image'] ?? null)) ?>" alt="Main product image preview">
-            <input type="file" name="image" accept="image/jpeg,image/png,image/webp,image/gif" data-preview="mainPreview" data-white-bg>
-            <div class="hint" data-white-bg-status="image"></div>
-            <label class="check mt"><input type="checkbox" id="whiteBgToggle" checked> Remove background &amp; make it white</label>
-            <div class="hint">Applies to the main image and new gallery photos. Processed in your browser before upload.</div>
+            <input type="file" name="image" accept="image/jpeg,image/png,image/webp,image/gif" data-preview="mainPreview">
             <div class="hint">Square images of at least 1000×1000px look best.</div>
           </div>
         </div>

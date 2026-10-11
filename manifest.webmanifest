@@ -1,0 +1,23 @@
+{
+  "id": "./",
+  "name": "Jenmond Mobile African Market",
+  "short_name": "Jenmond",
+  "description": "African groceries delivered across the USA — Milo, Peak milk, Malta, spices and more. Order online or pick up.",
+  "start_url": "./?source=app",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fbf8f2",
+  "theme_color": "#0d4a32",
+  "categories": ["shopping", "food"],
+  "icons": [
+    { "src": "assets/img/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "assets/img/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "assets/img/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Shop all products", "short_name": "Shop", "url": "shop.php?source=app", "icons": [{ "src": "assets/img/icon-192.png", "sizes": "192x192" }] },
+    { "name": "My cart", "short_name": "Cart", "url": "cart.php?source=app", "icons": [{ "src": "assets/img/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Track an order", "short_name": "Track", "url": "order-tracking.php?source=app", "icons": [{ "src": "assets/img/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

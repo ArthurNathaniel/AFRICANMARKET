@@ -23,6 +23,9 @@ $nav = [
         ['customers', 'Customers', 'bi-people', 'customers.php'],
         ['coupons', 'Coupons', 'bi-ticket-perforated', 'coupons.php'],
     ],
+    'Marketing'   => [
+        ['flyers', 'Flyers', 'bi-image', 'flyers.php'],
+    ],
     'Operations'  => [
         ['shipping', 'Shipping', 'bi-truck', 'shipping.php'],
         ['reports', 'Reports', 'bi-bar-chart-line', 'reports.php'],

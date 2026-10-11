@@ -47,17 +47,16 @@ require __DIR__ . '/partials/header.php';
 
   <div class="panel panel-body mb"><?php render_order_progress($order); ?></div>
 
-  <div class="cart-layout" style="grid-template-columns:minmax(0,1fr) 320px;padding-top:0">
+  <div class="cart-layout success-layout">
     <div class="panel panel-body">
       <h2 style="font-size:18px">Your items</h2>
-      <p class="small text-2" style="margin:4px 0 0">We'll email you tracking details as soon as your order ships.</p>
+      <p class="small text-2" style="margin:4px 0 0"><?= is_pickup_order($order) ? 'We’ll text you as soon as your order is ready for pickup.' : 'We’ll email you tracking details as soon as your order ships.' ?></p>
       <?php render_shipments((int) $order['id']); ?>
     </div>
     <div style="display:grid;gap:16px;align-content:start">
       <div class="panel panel-body"><?php render_order_totals($order); ?></div>
       <div class="panel panel-body small">
-        <strong>Shipping to</strong>
-        <div class="text-2" style="margin-top:4px"><?= e($order['ship_name']) ?><br><?= e($order['ship_line1']) ?><br><?php if ($order['ship_line2']): ?><?= e($order['ship_line2']) ?><br><?php endif; ?><?= e($order['ship_city']) ?>, <?= e($order['ship_state']) ?> <?= e($order['ship_zip']) ?></div>
+        <?php render_delivery_box($order); ?>
       </div>
       <?php if (!$customer && !$hasAccount): ?>
         <div class="panel panel-body">
